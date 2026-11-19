@@ -36,14 +36,18 @@ prepare)
         ln -s "_releases/$site/initial" "$link"
         echo initial >>"$releases/history"
     fi
+    cur=$(current)
+    # Re-deploying the live release (a re-run) uploads in place: deleting it first
+    # would take the site down until the upload finished.
+    [[ "$cur" == "_releases/$site/$release" ]] && exit 0
     rm -rf "${releases:?}/$release"
     # Printed for rsync --link-dest: unchanged files become hard links.
-    cur=$(current)
-    [[ -n "$cur" ]] && echo "$root/$cur"
+    if [[ -n "$cur" ]]; then echo "$root/$cur"; fi
     ;;
 activate)
     release="$4"
     keep="$5"
+    [[ "$keep" =~ ^[1-9][0-9]*$ ]] || { echo "::error::keep must be a positive whole number"; exit 1; }
     [[ -f "$releases/$release/index.html" ]] || { echo "::error::$release has no index.html"; exit 1; }
     prev=$(current)
     switch_to "_releases/$site/$release"
