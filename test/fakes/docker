@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Stand-in for the docker CLI: records every call and answers from fixtures the
+# test sets in the environment, so the remote scripts run without a daemon.
+echo "docker $*" >>"$FAKE_LOG"
+case "$1 $2" in
+"image ls")
+    printf '%b' "${FAKE_IMAGES:-}"
+    ;;
+"image rm")
+    [[ " ${FAKE_RM_FAIL:-} " == *" $3 "* ]] && { echo "conflict: $3 is in use" >&2; exit 1; }
+    exit 0
+    ;;
+"inspect --format")
+    [[ -n "${FAKE_RUNNING:-}" ]] && echo "$FAKE_RUNNING" || exit 1
+    ;;
+"compose up")
+    [[ " ${FAKE_UNHEALTHY:-} " == *" $IMAGE_TAG "* ]] && exit 1
+    exit 0
+    ;;
+*)
+    exit 0
+    ;;
+esac
