@@ -1,8 +1,8 @@
 name: Health-gated compose deploy
 description: >-
     Deploys one image tag with `docker compose up --wait`, rolls back to the previously
-    running tag when the new one never becomes healthy, and moves :latest to the released
-    tag. Expects the `ssh` action to have set up the host alias first, and the compose
+    running tag when the new one never becomes healthy, removes this app's old images,
+    and moves :latest to the released tag. Expects the `ssh` action to have set up the host alias first, and the compose
     file to use `image: <image>:${IMAGE_TAG:-latest}`.
 inputs:
     host-alias:
@@ -40,6 +40,14 @@ inputs:
         description: Registry token for private images (e.g. GITHUB_TOKEN with packages:read).
         required: false
         default: ''
+    keep-images:
+        description: >-
+            This app's image tags to keep on the host after a healthy release, counting the
+            live tag and the previous one (the rollback target), which are always kept.
+            Older tags of `image` and its untagged images are removed; other repositories
+            are never touched. 0 turns pruning off.
+        required: false
+        default: '2'
     promote-latest:
         description: Point :latest at the released tag after a healthy deploy (needs a registry login on the runner).
         required: false
@@ -47,6 +55,14 @@ inputs:
 runs:
     using: composite
     steps:
+        - name: Check inputs
+          shell: bash
+          env:
+              TAG: ${{ inputs.tag }}
+              KEEP: ${{ inputs.keep-images }}
+          run: |
+              [[ "$TAG" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::invalid image tag"; exit 1; }
+              [[ "$KEEP" =~ ^[0-9]+$ ]] || { echo "::error::keep-images must be a whole number"; exit 1; }
         - name: Upload compose file
           shell: bash
           env:
@@ -70,10 +86,22 @@ runs:
           # its arguments into one string for the remote shell, so each one is quoted
           # with %q first and none can inject shell syntax.
           run: |
-              [[ "$TAG" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::invalid image tag"; exit 1; }
               printf -v args '%q ' "$APP_DIR" "$SERVICE" "$CONTAINER" "$IMAGE" "$TAG" "$HEALTH_URL" "$REGISTRY_USER"
               { printf '%s\n' "$REGISTRY_TOKEN"; cat "$GITHUB_ACTION_PATH/remote-deploy.sh"; } |
                   ssh "$HOST" "bash -c 'read -r REGISTRY_TOKEN; export REGISTRY_TOKEN; exec bash -s -- \"\$@\"' _ $args"
+        - name: Prune this app's old images
+          if: inputs.keep-images != '0'
+          shell: bash
+          env:
+              HOST: ${{ inputs.host-alias }}
+              APP_DIR: ${{ inputs.app-dir }}
+              IMAGE: ${{ inputs.image }}
+              KEEP: ${{ inputs.keep-images }}
+          # The release is already live and healthy, so a failed cleanup only warns.
+          run: |
+              printf -v args '%q ' "$APP_DIR" "$IMAGE" "$KEEP"
+              ssh "$HOST" "bash -s -- $args" <"$GITHUB_ACTION_PATH/prune-images.sh" ||
+                  echo "::warning::image prune failed; old images remain on disk"
         - name: Promote :latest
           if: inputs.promote-latest == 'true'
           shell: bash

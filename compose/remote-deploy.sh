@@ -3,7 +3,8 @@
 #   remote-deploy.sh <app-dir> <service> <container> <image> <tag> <health-url> [registry-user]
 # REGISTRY_TOKEN comes from the environment (read from stdin by the caller).
 # Deploys <tag> behind compose's health gate, rolls back to the previously running
-# tag if it never becomes healthy, and records the release in <app-dir>/release.env.
+# tag if it never becomes healthy, and records the release in <app-dir>/release.env
+# (prune-images.sh reads it afterwards to know which tags to keep).
 set -euo pipefail
 
 app_dir="$1"
@@ -50,11 +51,6 @@ done
 if healthy "$new"; then
     printf 'IMAGE_TAG=%s\nPREVIOUS_TAG=%s\nDEPLOYED_AT=%s\n' \
         "$new" "$prev" "$(date -u +%FT%TZ)" >release.env
-    # Only this app's images, and only ones unused for a week: the previous tag
-    # stays around for a manual rollback.
-    docker image prune -af --filter "until=168h" \
-        --filter "label=org.opencontainers.image.title=$(basename "$image")" ||
-        echo "::warning::image prune failed; old images remain on disk"
     exit 0
 fi
 
