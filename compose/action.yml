@@ -1,0 +1,80 @@
+name: Health-gated compose deploy
+description: >-
+    Deploys one image tag with `docker compose up --wait`, rolls back to the previously
+    running tag when the new one never becomes healthy, and moves :latest to the released
+    tag. Expects the `ssh` action to have set up the host alias first, and the compose
+    file to use `image: <image>:${IMAGE_TAG:-latest}`.
+inputs:
+    host-alias:
+        description: SSH alias written by the `ssh` action.
+        required: false
+        default: droplet
+    app-dir:
+        description: Directory on the host that holds the compose file, e.g. /opt/acw.
+        required: true
+    compose-file:
+        description: Compose file in the repository to upload to app-dir.
+        required: false
+        default: docker-compose.yml
+    service:
+        description: Compose service to deploy.
+        required: false
+        default: app
+    container:
+        description: Container name of that service (to find the running tag for rollback).
+        required: true
+    image:
+        description: Image name without tag, e.g. ghcr.io/owner/app.
+        required: true
+    tag:
+        description: Tag to deploy, normally the full commit SHA.
+        required: true
+    health-url:
+        description: URL checked from the host after compose reports healthy, e.g. http://127.0.0.1:3000/.
+        required: true
+    registry-user:
+        description: Registry user for private images; leave empty for public ones.
+        required: false
+        default: ''
+    registry-token:
+        description: Registry token for private images (e.g. GITHUB_TOKEN with packages:read).
+        required: false
+        default: ''
+    promote-latest:
+        description: Point :latest at the released tag after a healthy deploy (needs a registry login on the runner).
+        required: false
+        default: 'true'
+runs:
+    using: composite
+    steps:
+        - name: Upload compose file
+          shell: bash
+          env:
+              HOST: ${{ inputs.host-alias }}
+              APP_DIR: ${{ inputs.app-dir }}
+              COMPOSE_FILE_PATH: ${{ inputs.compose-file }}
+          run: scp "$COMPOSE_FILE_PATH" "$HOST:$APP_DIR/docker-compose.yml"
+        - name: Deploy with automatic rollback
+          shell: bash
+          env:
+              HOST: ${{ inputs.host-alias }}
+              APP_DIR: ${{ inputs.app-dir }}
+              SERVICE: ${{ inputs.service }}
+              CONTAINER: ${{ inputs.container }}
+              IMAGE: ${{ inputs.image }}
+              TAG: ${{ inputs.tag }}
+              HEALTH_URL: ${{ inputs.health-url }}
+              REGISTRY_USER: ${{ inputs.registry-user }}
+              REGISTRY_TOKEN: ${{ inputs.registry-token }}
+          # The token travels on stdin, never as an argument visible in `ps`.
+          run: |
+              { printf '%s\n' "$REGISTRY_TOKEN"; cat "$GITHUB_ACTION_PATH/remote-deploy.sh"; } |
+                  ssh "$HOST" bash -c "'read -r REGISTRY_TOKEN; export REGISTRY_TOKEN; bash -s -- \"\$@\"'" _ \
+                      "$APP_DIR" "$SERVICE" "$CONTAINER" "$IMAGE" "$TAG" "$HEALTH_URL" "$REGISTRY_USER"
+        - name: Promote :latest
+          if: inputs.promote-latest == 'true'
+          shell: bash
+          env:
+              IMAGE: ${{ inputs.image }}
+              TAG: ${{ inputs.tag }}
+          run: docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE:$TAG"

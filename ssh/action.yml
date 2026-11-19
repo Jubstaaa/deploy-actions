@@ -1,0 +1,30 @@
+name: SSH to a host with a pinned key
+description: Writes an SSH config entry for a host, refusing any host key other than the pinned one.
+inputs:
+    host:
+        description: Hostname or IP address.
+        required: true
+    user:
+        description: SSH user.
+        required: true
+    key:
+        description: Private key (an Actions secret).
+        required: true
+    known-hosts:
+        description: The host's known_hosts line(s), pinned ahead of time (an Actions secret).
+        required: true
+    alias:
+        description: Name to reach the host by in later `ssh`/`scp` commands.
+        required: false
+        default: droplet
+runs:
+    using: composite
+    steps:
+        - shell: bash
+          env:
+              SSH_HOST: ${{ inputs.host }}
+              SSH_USER: ${{ inputs.user }}
+              SSH_KEY: ${{ inputs.key }}
+              KNOWN_HOSTS: ${{ inputs.known-hosts }}
+              SSH_ALIAS: ${{ inputs.alias }}
+          run: '"$GITHUB_ACTION_PATH/configure-ssh.sh"'
