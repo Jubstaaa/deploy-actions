@@ -10,13 +10,16 @@ install -m 700 -d ~/.ssh
 key_file=~/.ssh/id_"$SSH_ALIAS"
 printf '%s\n' "$SSH_KEY" >"$key_file"
 chmod 600 "$key_file"
-printf '%s\n' "$KNOWN_HOSTS" >>~/.ssh/known_hosts
+# Keyed by the alias (HostKeyAlias below), so the pin holds whether the host
+# secret is an IP or a name.
+printf '%s\n' "$KNOWN_HOSTS" | awk -v alias="$SSH_ALIAS" 'NF >= 3 && $1 !~ /^#/ { $1 = alias; print }' >>~/.ssh/known_hosts
 cat >>~/.ssh/config <<CONFIG
 Host $SSH_ALIAS
   HostName $SSH_HOST
   User $SSH_USER
   IdentityFile $key_file
   IdentitiesOnly yes
+  HostKeyAlias $SSH_ALIAS
   StrictHostKeyChecking yes
   ConnectTimeout 15
 CONFIG
