@@ -1,6 +1,6 @@
 # deploy-actions
 
-Composite GitHub Actions shared by my Docker-on-a-droplet apps, so every app deploys the same way and a fix lands in one place.
+Composite GitHub Actions shared by my apps and static sites on a droplet, so every app deploys the same way and a fix lands in one place.
 
 ## `ssh`
 
@@ -40,6 +40,28 @@ The compose service must use `image: <image>:${IMAGE_TAG:-latest}` and define a 
 ```
 
 Rollback by hand: re-run the deploy with an older commit SHA as `tag`.
+
+## `static`
+
+Atomic releases for static sites served from a directory (e.g. by Caddy's `file_server`):
+
+1. checks that the build output has a non-empty `index.html`;
+2. uploads it to `<sites-root>/_releases/<site>/<release>` with `rsync --checksum --link-dest`, so files unchanged since the live release become hard links;
+3. points `<sites-root>/<site>` (a **relative** symlink, so it resolves inside a container that mounts `sites-root`) at the new release with an atomic rename — visitors never see a half-copied site;
+4. with `health-url`, checks the live site and switches back to the previous release if it does not answer;
+5. keeps the newest `keep` releases (default 5) and records `release.env`.
+
+The first run turns the existing site directory into the `initial` release.
+
+```yaml
+- uses: Jubstaaa/deploy-actions/static@<sha>
+  with:
+      source-dir: out
+      site: brief
+      health-url: https://brief.example.com/
+```
+
+Rollback by hand: re-run the deploy for an older commit, or point the symlink at a kept release.
 
 ## License
 

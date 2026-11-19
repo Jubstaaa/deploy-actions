@@ -1,0 +1,86 @@
+name: Atomic static-site release
+description: >-
+    Uploads a built static site into its own release directory on the host, then
+    switches the served path (a relative symlink) to it atomically. If health-url
+    does not answer afterwards, the previous release is restored and the job fails.
+    Expects the `ssh` action to have set up the host alias first.
+inputs:
+    host-alias:
+        description: SSH alias written by the `ssh` action.
+        required: false
+        default: droplet
+    source-dir:
+        description: Local directory with the built site (must contain index.html).
+        required: true
+    sites-root:
+        description: Directory on the host that the web server serves sites from.
+        required: false
+        default: /opt/proxy/sites
+    site:
+        description: Name of the site directory under sites-root, e.g. brief.
+        required: true
+    release:
+        description: Release name, normally the commit SHA.
+        required: false
+        default: ${{ github.sha }}
+    keep:
+        description: Releases to keep on the host, including the live and the previous one.
+        required: false
+        default: '5'
+    health-url:
+        description: Public URL that must answer 2xx/3xx after the switch; empty skips the check.
+        required: false
+        default: ''
+runs:
+    using: composite
+    steps:
+        - name: Check the build output
+          shell: bash
+          env:
+              SOURCE_DIR: ${{ inputs.source-dir }}
+              RELEASE: ${{ inputs.release }}
+          run: |
+              [[ "$RELEASE" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::invalid release name"; exit 1; }
+              [[ -s "$SOURCE_DIR/index.html" ]] || { echo "::error::$SOURCE_DIR/index.html is missing or empty"; exit 1; }
+        - name: Upload the release
+          shell: bash
+          env:
+              HOST: ${{ inputs.host-alias }}
+              SOURCE_DIR: ${{ inputs.source-dir }}
+              ROOT: ${{ inputs.sites-root }}
+              SITE: ${{ inputs.site }}
+              RELEASE: ${{ inputs.release }}
+          run: |
+              printf -v args '%q ' prepare "$ROOT" "$SITE" "$RELEASE"
+              current=$(ssh "$HOST" "bash -s -- $args" <"$GITHUB_ACTION_PATH/release.sh")
+              link_dest=()
+              [[ -n "$current" ]] && link_dest=(--link-dest="$current")
+              # Compared by content, not mtime (every build rewrites mtimes), so files
+              # unchanged since the live release become hard links instead of copies.
+              rsync -rlpgoD --checksum --delete "${link_dest[@]}" "$SOURCE_DIR/" "$HOST:$ROOT/_releases/$SITE/$RELEASE/"
+        - name: Switch to the release
+          shell: bash
+          env:
+              HOST: ${{ inputs.host-alias }}
+              ROOT: ${{ inputs.sites-root }}
+              SITE: ${{ inputs.site }}
+              RELEASE: ${{ inputs.release }}
+              KEEP: ${{ inputs.keep }}
+          run: |
+              printf -v args '%q ' activate "$ROOT" "$SITE" "$RELEASE" "$KEEP"
+              ssh "$HOST" "bash -s -- $args" <"$GITHUB_ACTION_PATH/release.sh"
+        - name: Check the live site, roll back if it fails
+          if: inputs.health-url != ''
+          shell: bash
+          env:
+              HOST: ${{ inputs.host-alias }}
+              ROOT: ${{ inputs.sites-root }}
+              SITE: ${{ inputs.site }}
+              HEALTH_URL: ${{ inputs.health-url }}
+          run: |
+              if curl -fsS -o /dev/null --retry 3 --retry-all-errors --retry-delay 3 --max-time 15 "$HEALTH_URL"; then
+                  exit 0
+              fi
+              printf -v args '%q ' rollback "$ROOT" "$SITE"
+              ssh "$HOST" "bash -s -- $args" <"$GITHUB_ACTION_PATH/release.sh"
+              exit 1
