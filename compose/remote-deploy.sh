@@ -35,7 +35,17 @@ prev=$(docker inspect --format '{{.Config.Image}}' "$container" 2>/dev/null | se
 prev=${prev:-latest}
 echo "deploying $image:$new (running: $prev)"
 
-IMAGE_TAG="$new" docker compose pull "$service"
+# GHCR can take up to a minute after a push before it serves the new manifest,
+# answering "not found" meanwhile; wait for it instead of failing the release.
+for attempt in 1 2 3 4 5 6; do
+    IMAGE_TAG="$new" docker compose pull "$service" && break
+    if ((attempt == 6)); then
+        echo "::error::the registry never served $image:$new"
+        exit 1
+    fi
+    echo "pull attempt $attempt failed; retrying in 20s"
+    sleep 20
+done
 
 if healthy "$new"; then
     printf 'IMAGE_TAG=%s\nPREVIOUS_TAG=%s\nDEPLOYED_AT=%s\n' \
