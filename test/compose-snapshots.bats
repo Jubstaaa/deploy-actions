@@ -244,3 +244,140 @@ $other"
     [ "$status" -eq 0 ]
     [ "$(ls -A "$snaps")" = "$(basename "$(only_snapshot 'main-old-*.sqlite')")" ]
 }
+
+# A compromised container can write to its data directory, so it can plant symlinks
+# there; none of them may make the deploy write or read through them.
+
+@test "a database that is a symlink is refused" {
+    mv "$db" "$app_dir/data/real.db"
+    ln -s "$app_dir/data/real.db" "$db"
+    deploy new
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"symlink"* ]]
+    ! grep -q 'compose' "$FAKE_LOG"
+}
+
+@test "a symlinked journal file aborts the snapshot without being followed" {
+    victim="$BATS_TEST_TMPDIR/victim"
+    echo victim >"$victim"
+    ln -s "$victim" "$db-shm"
+    deploy new
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"symlink"* ]]
+    ! grep -q 'compose up' "$FAKE_LOG"
+    [ "$(cat "$victim")" = victim ]
+}
+
+@test "a planted restore file cannot redirect the restore" {
+    victim="$BATS_TEST_TMPDIR/victim"
+    echo victim >"$victim"
+    ln -s "$victim" "$db.restoring"
+    export FAKE_UNHEALTHY=new
+    deploy new
+    [ "$(cat "$victim")" = victim ]
+    [ "$(value "$db")" = v1 ]
+}
+
+@test "a symlink planted by the failed release blocks the restore loudly" {
+    victim="$BATS_TEST_TMPDIR/victim"
+    echo victim >"$victim"
+    export FAKE_UNHEALTHY=new
+    export FAKE_ON_UP="[ \"\$IMAGE_TAG\" = new ] && ln -s '$victim' '$db-wal'; true"
+    deploy new
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"symlink"* ]]
+    [[ "$output" == *"COULD NOT RESTORE"* ]]
+    [ "$(cat "$victim")" = victim ]
+}
+
+@test "as root, the data directory is only written as the database's owner" {
+    [ "$(id -u)" -eq 0 ] || skip "needs root"
+    chmod a+x "$BATS_RUN_TMPDIR" "$BATS_RUN_TMPDIR/test" "$BATS_TEST_TMPDIR" "$app_dir"
+    chown -R nobody:nogroup "$app_dir/data"
+    migrating_release new
+    export FAKE_UNHEALTHY=new
+    deploy new
+    [ "$status" -eq 1 ]
+    [ "$(value "$db")" = v1 ]
+    [ "$(stat -c %U "$db")" = nobody ]
+    [ "$(stat -c %U "$(only_snapshot 'main-old-*.sqlite')")" = nobody ]
+    failed=("$db".failed-*)
+    [ "$(stat -c %U "${failed[0]}")" = nobody ]
+    [ "$(find "$app_dir/data" -user root | wc -l)" -eq 0 ]
+}
+
+@test "an automatic rollback restores every database" {
+    other="$app_dir/data/other.db"
+    make_db "$other" o1
+    export FAKE_UNHEALTHY=new
+    export FAKE_ON_UP="[ \"\$IMAGE_TAG\" = new ] && sqlite3 '$db' \"update t set v='m'\" && sqlite3 '$other' \"update t set v='m'\"; true"
+    deploy new "$db $other"
+    [ "$status" -eq 1 ]
+    [ "$(value "$db")" = v1 ]
+    [ "$(value "$other")" = o1 ]
+}
+
+@test "a restore that fails for one database changes none of them" {
+    other="$app_dir/data/other.db"
+    make_db "$other" o-current
+    export FAKE_RUNNING="$image:bad"
+    mkdir -p "$snaps"
+    make_db "$snaps/main-good-20261101T000000Z.sqlite" old
+    echo 'not a database' >"$snaps/other-good-20261101T000000Z.sqlite"
+    migrating_release none
+    deploy good "$db $other" 5 true
+    [ "$status" -ne 0 ]
+    [ "$(value "$db")" = v1 ]
+    [ "$(value "$other")" = o-current ]
+    grep -qx 'up bad sees v1' "$FAKE_LOG"
+    ! ls "$app_dir"/data/*.restoring* "$app_dir"/data/*.failed-* 2>/dev/null
+    [[ "$output" == *"not a database"* ]]
+}
+
+@test "restore-snapshot refuses to restore the tag that is already running" {
+    export FAKE_RUNNING="$image:good"
+    mkdir -p "$snaps"
+    make_db "$snaps/main-good-20261101T000000Z.sqlite" old
+    deploy good "$db" 5 true
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"already running"* ]]
+    [ "$(value "$db")" = v1 ]
+    ! grep -q 'compose' "$FAKE_LOG"
+}
+
+@test "a snapshot that cannot be pruned is a warning after a healthy release" {
+    mkdir -p "$snaps" "$BATS_TEST_TMPDIR/bin"
+    for day in 01 02; do
+        cp "$db" "$snaps/main-t$day-202611${day}T000000Z.sqlite"
+    done
+    printf '#!/usr/bin/env bash\n[[ "$*" == *main-t01* ]] && exit 1\nexec /bin/rm "$@"\n' >"$BATS_TEST_TMPDIR/bin/rm"
+    chmod +x "$BATS_TEST_TMPDIR/bin/rm"
+    PATH="$BATS_TEST_TMPDIR/bin:$PATH" deploy new "$db" 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"::warning::"*"main-t01"* ]]
+    grep -qx 'IMAGE_TAG=new' "$app_dir/release.env"
+}
+
+@test "a swap that fails partway puts the databases back as the failed release left them" {
+    other="$app_dir/data/other.db"
+    make_db "$other" o1
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    printf '#!/usr/bin/env bash\n[[ "${!#}" == */other.db ]] && exit 1\nexec /bin/mv "$@"\n' >"$BATS_TEST_TMPDIR/bin/mv"
+    chmod +x "$BATS_TEST_TMPDIR/bin/mv"
+    export FAKE_UNHEALTHY=new
+    export FAKE_ON_UP="[ \"\$IMAGE_TAG\" = new ] && sqlite3 '$db' \"update t set v='m'\" && sqlite3 '$other' \"update t set v='m'\"; true"
+    PATH="$BATS_TEST_TMPDIR/bin:$PATH" deploy new "$db $other"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"put back"* ]]
+    [ "$(value "$db")" = m ]
+    [ "$(value "$other")" = m ]
+    ! ls "$app_dir"/data/*.restoring* 2>/dev/null
+}
+
+@test "a running image without a usable tag stops a release that snapshots" {
+    export FAKE_RUNNING="localhost:5000/app"
+    deploy new
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"running tag"* ]]
+    ! grep -q 'compose up' "$FAKE_LOG"
+}

@@ -7,8 +7,9 @@ All notable changes to these actions. Versions follow [Semantic Versioning](http
 ### Added
 
 - `compose`: `sqlite-snapshot` input. Before each release, every listed SQLite database is copied with SQLite's online backup API to `<app-dir>/snapshots/<name>-<running tag>-<UTC>.sqlite`, keeping the database's owner and mode, and must pass `pragma integrity_check`; a failed snapshot fails the deploy before anything changes.
-- `compose`: on automatic rollback, the service is stopped and each database is atomically replaced by this deploy's snapshot before the previous tag starts; the failed release's database (and its `-wal`/`-shm`/`-journal` files) is kept as `<db>.failed-<UTC>`.
-- `compose`: `restore-snapshot` input for manual rollbacks: starts `tag` on the newest snapshot taken while `tag` was running.
+- `compose`: on automatic rollback, the service is stopped and each database is atomically replaced by this deploy's snapshot before the previous tag starts, all or nothing across databases; the failed release's database (and its `-wal`/`-shm`/`-journal` files) is kept as `<db>.failed-<UTC>`.
+- `compose`: `restore-snapshot` input for manual rollbacks: starts `tag` on the newest snapshot taken while `tag` was running (refused when `tag` is already running).
+- Work inside the app's data directory runs as the database's owner and refuses symlinked database and journal files, so a compromised container cannot redirect a root write.
 - `compose`: `keep-snapshots` input (default 5) for per-database retention.
 
 ### Changed
