@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Stand-in for the docker CLI: records every call and answers from fixtures the
 # test sets in the environment, so the remote scripts run without a daemon.
+# FAKE_ON_UP runs (with IMAGE_TAG set) on every `compose up`, so a test can play
+# a release that migrates the database or record what a starting release sees.
 echo "docker $*" >>"$FAKE_LOG"
 case "$1 $2" in
 "image ls")
@@ -14,6 +16,9 @@ case "$1 $2" in
     [[ -n "${FAKE_RUNNING:-}" ]] && echo "$FAKE_RUNNING" || exit 1
     ;;
 "compose up")
+    if [[ -n "${FAKE_ON_UP:-}" ]]; then
+        bash -c "$FAKE_ON_UP" || exit 1
+    fi
     [[ " ${FAKE_UNHEALTHY:-} " == *" $IMAGE_TAG "* ]] && exit 1
     exit 0
     ;;

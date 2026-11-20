@@ -28,7 +28,9 @@ jobs:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
                   persist-credentials: false
-            - name: Install bats
-              run: sudo apt-get update -qq && sudo apt-get install -y -qq bats
+            - name: Install bats and sqlite3
+              run: sudo apt-get update -qq && sudo apt-get install -y -qq bats sqlite3
             - name: bats
               run: bats test
+            - name: bats as root (snapshots switch to the database owner)
+              run: sudo bats test/compose-snapshots.bats
