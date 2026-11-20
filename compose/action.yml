@@ -2,7 +2,8 @@ name: Health-gated compose deploy
 description: >-
     Deploys one image tag with `docker compose up --wait`, rolls back to the previously
     running tag when the new one never becomes healthy, removes this app's old images,
-    and moves :latest to the released tag. Expects the `ssh` action to have set up the host alias first, and the compose
+    and moves :latest to the released tag. Optionally snapshots SQLite databases before
+    each release and puts them back on rollback. Expects the `ssh` action to have set up the host alias first, and the compose
     file to use `image: <image>:${IMAGE_TAG:-latest}`.
 inputs:
     host-alias:
@@ -30,7 +31,10 @@ inputs:
         description: Tag to deploy, normally the full commit SHA.
         required: true
     health-url:
-        description: URL checked from the host after compose reports healthy, e.g. http://127.0.0.1:3000/.
+        description: >-
+            URL checked from the host after compose reports healthy, e.g. http://127.0.0.1:3000/.
+            Point it at an endpoint that touches the database (e.g. /api/health) so a release
+            that cannot read its data is rolled back.
         required: true
     registry-user:
         description: Registry user for private images; leave empty for public ones.
@@ -48,6 +52,27 @@ inputs:
             are never touched. 0 turns pruning off.
         required: false
         default: '2'
+    sqlite-snapshot:
+        description: >-
+            Host paths of SQLite databases inside app-dir, one per line. Before the new tag
+            starts, each is copied with SQLite's online backup API to
+            <app-dir>/snapshots/<name>-<running tag>-<UTC>.sqlite and integrity-checked; a
+            failed snapshot fails the deploy before anything changes. If the release is rolled
+            back, the service is stopped and the snapshot is put back before the previous tag
+            starts. Needs the sqlite3 CLI on the host. Empty (the default) turns it off.
+        required: false
+        default: ''
+    keep-snapshots:
+        description: Snapshots kept per database (newest first, at least 1).
+        required: false
+        default: '5'
+    restore-snapshot:
+        description: >-
+            Manual rollback across a migration: 'true' starts `tag` on the newest snapshot
+            taken while `tag` was running, discarding every write made since. The replaced
+            database is kept as <db>.failed-<UTC>. Needs sqlite-snapshot.
+        required: false
+        default: 'false'
     promote-latest:
         description: Point :latest at the released tag after a healthy deploy (needs a registry login on the runner).
         required: false
@@ -60,9 +85,13 @@ runs:
           env:
               TAG: ${{ inputs.tag }}
               KEEP: ${{ inputs.keep-images }}
+              KEEP_SNAPSHOTS: ${{ inputs.keep-snapshots }}
+              RESTORE_SNAPSHOT: ${{ inputs.restore-snapshot }}
           run: |
               [[ "$TAG" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::invalid image tag"; exit 1; }
               [[ "$KEEP" =~ ^[0-9]+$ ]] || { echo "::error::keep-images must be a whole number"; exit 1; }
+              [[ "$KEEP_SNAPSHOTS" =~ ^[1-9][0-9]*$ ]] || { echo "::error::keep-snapshots must be a whole number of at least 1"; exit 1; }
+              [[ "$RESTORE_SNAPSHOT" == true || "$RESTORE_SNAPSHOT" == false ]] || { echo "::error::restore-snapshot must be true or false"; exit 1; }
         - name: Upload compose file
           shell: bash
           env:
@@ -82,11 +111,17 @@ runs:
               HEALTH_URL: ${{ inputs.health-url }}
               REGISTRY_USER: ${{ inputs.registry-user }}
               REGISTRY_TOKEN: ${{ inputs.registry-token }}
+              SQLITE_DBS: ${{ inputs.sqlite-snapshot }}
+              KEEP_SNAPSHOTS: ${{ inputs.keep-snapshots }}
+              RESTORE_SNAPSHOT: ${{ inputs.restore-snapshot }}
           # The token travels on stdin, never as an argument visible in `ps`. ssh joins
           # its arguments into one string for the remote shell, so each one is quoted
-          # with %q first and none can inject shell syntax.
+          # with %q first and none can inject shell syntax. The database list is joined onto
+          # one line so %q never needs $'…' quoting, which a non-bash login shell would not parse.
           run: |
-              printf -v args '%q ' "$APP_DIR" "$SERVICE" "$CONTAINER" "$IMAGE" "$TAG" "$HEALTH_URL" "$REGISTRY_USER"
+              SQLITE_DBS=${SQLITE_DBS//$'\n'/ }
+              printf -v args '%q ' "$APP_DIR" "$SERVICE" "$CONTAINER" "$IMAGE" "$TAG" "$HEALTH_URL" "$REGISTRY_USER" \
+                  "$SQLITE_DBS" "$KEEP_SNAPSHOTS" "$RESTORE_SNAPSHOT"
               { printf '%s\n' "$REGISTRY_TOKEN"; cat "$GITHUB_ACTION_PATH/remote-deploy.sh"; } |
                   ssh "$HOST" "bash -c 'read -r REGISTRY_TOKEN; export REGISTRY_TOKEN; exec bash -s -- \"\$@\"' _ $args"
         - name: Prune this app's old images
