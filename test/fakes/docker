@@ -3,7 +3,21 @@
 # test sets in the environment, so the remote scripts run without a daemon.
 # FAKE_ON_UP runs (with IMAGE_TAG set) on every `compose up`, so a test can play
 # a release that migrates the database or record what a starting release sees.
+#
+# With FAKE_STATE (a directory) and FAKE_IMAGE set, the fake also tracks image IDs:
+# `<image>@sha256:<hex>` has the ID img-<hex>, `docker tag` points a tag at an ID,
+# and `compose up` records the ID of <image>:$IMAGE_TAG as the running container's,
+# unless FAKE_UP_ID forces another (a compose file that does not run the pinned tag).
 echo "docker $*" >>"$FAKE_LOG"
+
+id_of() {
+    if [[ "$1" == *@sha256:* ]]; then
+        echo "img-${1##*@sha256:}"
+    else
+        cat "$FAKE_STATE/tag-${1//[\/:]/_}" 2>/dev/null || echo "img-tag-${1##*:}"
+    fi
+}
+
 case "$1 $2" in
 "image ls")
     printf '%b' "${FAKE_IMAGES:-}"
@@ -12,14 +26,29 @@ case "$1 $2" in
     [[ " ${FAKE_RM_FAIL:-} " == *" $3 "* ]] && { echo "conflict: $3 is in use" >&2; exit 1; }
     exit 0
     ;;
+"image inspect")
+    [[ "$3" == --format ]] && id_of "$5"
+    exit 0
+    ;;
+"tag "*)
+    [[ -n "${FAKE_STATE:-}" ]] && id_of "$2" >"$FAKE_STATE/tag-${3//[\/:]/_}"
+    exit 0
+    ;;
 "inspect --format")
-    [[ -n "${FAKE_RUNNING:-}" ]] && echo "$FAKE_RUNNING" || exit 1
+    if [[ "$3" == '{{.Image}}' ]]; then
+        cat "$FAKE_STATE/running" 2>/dev/null || exit 1
+    else
+        [[ -n "${FAKE_RUNNING:-}" ]] && echo "$FAKE_RUNNING" || exit 1
+    fi
     ;;
 "compose up")
     if [[ -n "${FAKE_ON_UP:-}" ]]; then
         bash -c "$FAKE_ON_UP" || exit 1
     fi
     [[ " ${FAKE_UNHEALTHY:-} " == *" $IMAGE_TAG "* ]] && exit 1
+    if [[ -n "${FAKE_STATE:-}" ]]; then
+        echo "${FAKE_UP_ID:-$(id_of "$FAKE_IMAGE:$IMAGE_TAG")}" >"$FAKE_STATE/running"
+    fi
     exit 0
     ;;
 *)

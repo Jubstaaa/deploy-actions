@@ -2,6 +2,7 @@
 # Runs on the host, piped over SSH by the compose action:
 #   remote-deploy.sh <app-dir> <service> <container> <image> <tag> <health-url>
 #                    [registry-user] [sqlite-dbs] [keep-snapshots] [restore-snapshot]
+#                    [image-digest]
 # REGISTRY_TOKEN comes from the environment (read from stdin by the caller).
 # Deploys <tag> behind compose's health gate, rolls back to the previously running
 # tag if it never becomes healthy, and records the release in <app-dir>/release.env
@@ -12,6 +13,12 @@
 # tag>-<UTC>.sqlite before the new tag starts, and a rollback puts that copy back
 # before the previous tag starts again. restore-snapshot=true (a manual rollback)
 # also starts <tag> on the newest snapshot taken while <tag> was running.
+#
+# With image-digest (sha256:...), <image>@<digest> is pulled and tagged locally as
+# <image>:<tag>, compose starts it without pulling, and the running container must
+# have that image's ID, or the release is rolled back. A tag re-pushed after the
+# image was tested therefore cannot ship. The digest is recorded in release.env,
+# and a rollback restarts the previous release from its recorded digest.
 set -euo pipefail
 
 app_dir="${1%/}"
@@ -24,6 +31,7 @@ registry_user="${7:-}"
 sqlite_dbs="${8:-}"
 keep_snapshots="${9:-5}"
 restore_snapshot="${10:-false}"
+new_digest="${11:-}"
 
 snapshot_dir="$app_dir/snapshots"
 stamp_glob='[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z'
@@ -225,6 +233,8 @@ restore_all() {
 }
 
 check_snapshot_inputs
+[[ -z "$new_digest" || "$new_digest" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+    fail "image-digest must be sha256:<64 hex characters>, got '$new_digest'"
 
 # A throwaway Docker config: other apps' deploys leave expired registry tokens in
 # the shared ~/.docker/config.json, and a registry rejects a pull that presents one.
@@ -238,14 +248,57 @@ fi
 
 cd "$app_dir"
 
+# Prints the digest release.env records for <tag>, if any.
+recorded_digest() {
+    [[ -f release.env ]] || return 0
+    local key value tag="" previous=""
+    while IFS='=' read -r key value; do
+        case "$key" in
+        IMAGE_TAG) [[ "$value" == "$1" ]] && tag=1 ;;
+        PREVIOUS_TAG) [[ "$value" == "$1" ]] && previous=1 ;;
+        IMAGE_DIGEST) [[ -n "$tag" ]] && echo "$value" && return 0 ;;
+        PREVIOUS_DIGEST) [[ -n "$previous" ]] && echo "$value" && return 0 ;;
+        esac
+    done <release.env
+    return 0
+}
+
+# Points the local <image>:<tag> at <image>@<digest>, pulling it if it is not here.
+pin() {
+    local tag="$1" digest="$2"
+    docker image inspect "$image@$digest" >/dev/null 2>&1 || docker pull "$image@$digest" || return 1
+    docker tag "$image@$digest" "$image:$tag"
+}
+
+runs_digest() {
+    local digest="$1" want got
+    want=$(docker image inspect --format '{{.Id}}' "$image@$digest") || return 1
+    got=$(docker inspect --format '{{.Image}}' "$container") || return 1
+    [[ -n "$want" && "$got" == "$want" ]] && return 0
+    echo "::error::$container runs image $got, not $image@$digest ($want); refusing it"
+    return 1
+}
+
+# healthy <tag> [digest]: with a digest, compose must start exactly that image.
 healthy() {
-    IMAGE_TAG="$1" docker compose up -d --wait --wait-timeout 120 "$service" &&
+    local tag="$1" digest="${2:-}"
+    if [[ -z "$digest" ]]; then
+        IMAGE_TAG="$tag" docker compose up -d --wait --wait-timeout 120 "$service" &&
+            curl -fsS -o /dev/null --max-time 10 "$health_url"
+        return
+    fi
+    pin "$tag" "$digest" &&
+        IMAGE_TAG="$tag" docker compose up -d --wait --wait-timeout 120 --pull never "$service" &&
+        runs_digest "$digest" &&
         curl -fsS -o /dev/null --max-time 10 "$health_url"
 }
 
 prev=$(docker inspect --format '{{.Config.Image}}' "$container" 2>/dev/null | sed 's/.*://') || true
 prev=${prev:-latest}
-echo "deploying $image:$new (running: $prev)"
+prev_digest=$(recorded_digest "$prev")
+[[ -z "$prev_digest" || "$prev_digest" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+    fail "release.env records a malformed digest '$prev_digest' for $prev"
+echo "deploying $image:$new${new_digest:+@$new_digest} (running: $prev${prev_digest:+@$prev_digest})"
 if ((${#dbs[@]})) && [[ ! "$prev" =~ ^[A-Za-z0-9._-]+$ ]]; then
     fail "cannot name snapshots after the running tag '$prev'; deploy by tag first"
 fi
@@ -263,10 +316,17 @@ fi
 
 # GHCR can take up to a minute after a push before it serves the new manifest,
 # answering "not found" meanwhile; wait for it instead of failing the release.
+pull_new() {
+    if [[ -n "$new_digest" ]]; then
+        docker pull "$image@$new_digest"
+    else
+        IMAGE_TAG="$new" docker compose pull "$service"
+    fi
+}
 for attempt in 1 2 3 4 5 6; do
-    IMAGE_TAG="$new" docker compose pull "$service" && break
+    pull_new && break
     if ((attempt == 6)); then
-        echo "::error::the registry never served $image:$new"
+        echo "::error::the registry never served $image:$new${new_digest:+@$new_digest}"
         exit 1
     fi
     echo "pull attempt $attempt failed; retrying in 20s"
@@ -287,13 +347,18 @@ fi
 
 if ((${#wanted[@]})) && ! restore_all "${wanted[@]}"; then
     echo "::error::could not restore the snapshots of $new; it was not started, restarting $prev"
-    healthy "$prev" || echo "::error::$prev did not come back either; production is likely down"
+    healthy "$prev" "$prev_digest" || echo "::error::$prev did not come back either; production is likely down"
     exit 1
 fi
 
-if healthy "$new"; then
-    printf 'IMAGE_TAG=%s\nPREVIOUS_TAG=%s\nDEPLOYED_AT=%s\n' \
-        "$new" "$prev" "$(date -u +%FT%TZ)" >release.env
+if healthy "$new" "$new_digest"; then
+    {
+        echo "IMAGE_TAG=$new"
+        [[ -z "$new_digest" ]] || echo "IMAGE_DIGEST=$new_digest"
+        echo "PREVIOUS_TAG=$prev"
+        [[ -z "$prev_digest" ]] || echo "PREVIOUS_DIGEST=$prev_digest"
+        echo "DEPLOYED_AT=$(date -u +%FT%TZ)"
+    } >release.env
     # Only once the release is live, so a short keep-snapshots never removes a snapshot
     # a restore still needs and retention can never take the service down.
     for db in "${dbs[@]}"; do
@@ -314,7 +379,7 @@ if ((${#taken[@]})); then
     restore_all "${pairs[@]}" ||
         echo "::error::COULD NOT RESTORE THE DATABASE SNAPSHOTS; $prev starts on the databases $new left behind"
 fi
-if healthy "$prev"; then
+if healthy "$prev" "$prev_digest"; then
     echo "::error::rolled back; production is serving $prev"
 else
     echo "::error::ROLLBACK TO $prev FAILED; production is likely down"
