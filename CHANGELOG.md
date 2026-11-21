@@ -6,6 +6,16 @@ All notable changes to these actions. Versions follow [Semantic Versioning](http
 
 ### Added
 
+- `compose`: optional `image-digest` input (`sha256:…`). The release pulls `<image>@<digest>`, tags it locally as `<image>:<tag>`, starts it with `docker compose up --pull never`, and requires the running container's image ID to match the digest's; a mismatch is refused and rolled back like a failed health check. A tag re-pushed between publish and deploy can no longer ship an untested image.
+- `compose`: `release.env` records `IMAGE_DIGEST` and `PREVIOUS_DIGEST` when known, and an automatic rollback restarts the previous release from its recorded digest (also for tag-only deploys that follow a digest release).
+- `compose`: with `image-digest`, `:latest` is moved to the digest instead of the tag.
+
+Without `image-digest`, behaviour and `release.env` are unchanged.
+
+## 1.5.0 — 2026-11-22
+
+### Added
+
 - `quality-gate`: reusable workflow (`on: workflow_call`) that runs a project's format check, lint, typecheck, test, knip, jscpd, dependency-cruiser, build and audit scripts, plus actionlint and a Trivy filesystem scan, with `runtime` (`bun`/`node`), `node-version-file`, `working-directory` and a toggle per step. CI runs it against bun and npm fixture projects.
 
 ## 1.4.0 — 2026-11-20
