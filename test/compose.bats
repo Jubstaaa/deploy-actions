@@ -8,11 +8,25 @@ setup() {
     app_dir="$BATS_TEST_TMPDIR/app"
     mkdir -p "$app_dir"
     image=ghcr.io/me/app
+    export FAKE_STATE="$BATS_TEST_TMPDIR/docker-state" FAKE_IMAGE="$image"
+    mkdir -p "$FAKE_STATE"
+    new_digest=sha256:$(printf 'a%.0s' {1..64})
+    old_digest=sha256:$(printf 'b%.0s' {1..64})
 }
 
 deploy() {
     run bash "$BATS_TEST_DIRNAME/../compose/remote-deploy.sh" \
         "$app_dir" app app "$image" "$1" http://127.0.0.1:3000/
+}
+
+# deploy_digest <tag> <digest>: the digest-pinned release.
+deploy_digest() {
+    run bash "$BATS_TEST_DIRNAME/../compose/remote-deploy.sh" \
+        "$app_dir" app app "$image" "$1" http://127.0.0.1:3000/ '' '' 5 false "$2"
+}
+
+running_id() {
+    cat "$FAKE_STATE/running"
 }
 
 prune() {
@@ -43,6 +57,81 @@ images() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"rolling back to old"* ]]
     [ ! -e "$app_dir/release.env" ]
+}
+
+@test "a digest deploy pulls and runs exactly that digest and records it" {
+    export FAKE_RUNNING="$image:old"
+    deploy_digest new "$new_digest"
+    [ "$status" -eq 0 ]
+    grep -qx "docker pull $image@$new_digest" "$FAKE_LOG"
+    grep -qx "docker tag $image@$new_digest $image:new" "$FAKE_LOG"
+    grep -q '^docker compose up .*--pull never' "$FAKE_LOG"
+    ! grep -q '^docker compose pull' "$FAKE_LOG"
+    [ "$(running_id)" = "img-${new_digest#sha256:}" ]
+    grep -qx 'IMAGE_TAG=new' "$app_dir/release.env"
+    grep -qx "IMAGE_DIGEST=$new_digest" "$app_dir/release.env"
+}
+
+@test "a container that does not run the pinned digest is refused and rolled back" {
+    export FAKE_RUNNING="$image:old" FAKE_UP_ID=img-repushed
+    deploy_digest new "$new_digest"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not $image@$new_digest"* ]]
+    [[ "$output" == *"rolling back to old"* ]]
+    [ ! -e "$app_dir/release.env" ]
+}
+
+@test "a malformed digest is refused before anything is pulled" {
+    export FAKE_RUNNING="$image:old"
+    deploy_digest new sha256:nothex
+    [ "$status" -ne 0 ]
+    ! grep -q 'pull\|compose up' "$FAKE_LOG"
+}
+
+@test "rollback restarts the previous release from its recorded digest" {
+    export FAKE_RUNNING="$image:old" FAKE_UNHEALTHY=new
+    printf 'IMAGE_TAG=old\nIMAGE_DIGEST=%s\nPREVIOUS_TAG=older\nDEPLOYED_AT=x\n' "$old_digest" >"$app_dir/release.env"
+    echo img-tampered >"$FAKE_STATE/tag-${image//[\/:]/_}_old"
+    deploy_digest new "$new_digest"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"rolled back; production is serving old"* ]]
+    grep -qx "docker tag $image@$old_digest $image:old" "$FAKE_LOG"
+    [ "$(running_id)" = "img-${old_digest#sha256:}" ]
+}
+
+@test "a tag-only deploy also rolls back to the recorded digest" {
+    export FAKE_RUNNING="$image:old" FAKE_UNHEALTHY=new
+    printf 'IMAGE_TAG=old\nIMAGE_DIGEST=%s\nDEPLOYED_AT=x\n' "$old_digest" >"$app_dir/release.env"
+    deploy new
+    [ "$status" -eq 1 ]
+    grep -qx "docker tag $image@$old_digest $image:old" "$FAKE_LOG"
+    [ "$(running_id)" = "img-${old_digest#sha256:}" ]
+}
+
+@test "a recorded digest of another tag is not used for the rollback" {
+    export FAKE_RUNNING="$image:old" FAKE_UNHEALTHY=new
+    printf 'IMAGE_TAG=other\nIMAGE_DIGEST=%s\nDEPLOYED_AT=x\n' "$old_digest" >"$app_dir/release.env"
+    deploy_digest new "$new_digest"
+    [ "$status" -eq 1 ]
+    ! grep -q "$old_digest" "$FAKE_LOG"
+}
+
+@test "a digest release records the previous release's digest" {
+    export FAKE_RUNNING="$image:old"
+    printf 'IMAGE_TAG=old\nIMAGE_DIGEST=%s\nDEPLOYED_AT=x\n' "$old_digest" >"$app_dir/release.env"
+    deploy_digest new "$new_digest"
+    [ "$status" -eq 0 ]
+    grep -qx 'PREVIOUS_TAG=old' "$app_dir/release.env"
+    grep -qx "PREVIOUS_DIGEST=$old_digest" "$app_dir/release.env"
+}
+
+@test "a tag-only deploy keeps the tag path: compose pull, no pinning, no digest record" {
+    export FAKE_RUNNING="$image:old"
+    deploy new
+    [ "$status" -eq 0 ]
+    grep -qx 'docker compose pull app' "$FAKE_LOG"
+    ! grep -q '^docker pull\|^docker tag\|--pull never' "$FAKE_LOG"
+    [ "$(cut -d= -f1 "$app_dir/release.env" | tr '\n' ' ')" = 'IMAGE_TAG PREVIOUS_TAG DEPLOYED_AT ' ]
 }
 
 @test "the deploy itself removes no images" {

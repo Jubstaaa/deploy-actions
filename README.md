@@ -23,9 +23,9 @@ Get the `known-hosts` value from a machine that already trusts the host (`ssh-ke
 Health-gated deploy with automatic rollback:
 
 1. uploads the repository's compose file to `app-dir`, so the server never drifts from git;
-2. pulls `image:tag` and runs `docker compose up --wait` (the service's healthcheck) plus an HTTP check on `health-url`;
+2. pulls `image:tag` (or `image@image-digest`, see below) and runs `docker compose up --wait` (the service's healthcheck) plus an HTTP check on `health-url`;
 3. if the new tag never becomes healthy, starts the previously running tag again (on the pre-release database snapshot, when `sqlite-snapshot` is set) and fails the job;
-4. on success writes `release.env` (`IMAGE_TAG`, `PREVIOUS_TAG`), removes this app's old images, and moves `:latest` to the released tag.
+4. on success writes `release.env` (`IMAGE_TAG`, `PREVIOUS_TAG`, plus `IMAGE_DIGEST`/`PREVIOUS_DIGEST` when known), removes this app's old images, and moves `:latest` to the released tag (or digest).
 
 Image cleanup keeps `keep-images` tags of `image` (default `2`): the live tag and the previous one from `release.env` are always kept, then the newest others up to that count. Older tags and the repository's untagged images are removed with a plain `docker image rm`, so an image a container still uses is left alone; the local `:latest` tag is kept because the compose file falls back to it. Only `image`'s own repository is touched (never a global `docker image prune`), so it is safe on a host shared by several apps. Set `keep-images: 0` to turn it off. A failed cleanup is a warning; the release stays live.
 
@@ -38,13 +38,46 @@ The compose service must use `image: <image>:${IMAGE_TAG:-latest}` and define a 
       container: myapp
       image: ghcr.io/me/myapp
       tag: ${{ github.sha }}
+      image-digest: ${{ needs.image.outputs.digest }}   # recommended, see below
       health-url: http://127.0.0.1:3000/
       # keep-images: 2       # image tags kept on the host, live + previous included
 ```
 
+### Deploy by digest
+
+A tag can be re-pushed between the build that tested it and the deploy, so `tag` alone can ship an image nobody tested. Pass the tested image's digest as `image-digest` (`sha256:` + 64 hex characters, e.g. the `digest` output of `docker/build-push-action`, exposed as a job output):
+
+- the host pulls `image@image-digest`, tags it locally as `image:tag` and starts it with `docker compose up --pull never`, so the compose file stays `image: <image>:${IMAGE_TAG:-latest}`;
+- after compose reports healthy, the container's image ID must equal the digest's image ID, or the release is refused and rolled back (this also catches a compose file that ignores `IMAGE_TAG` or sets `pull_policy: always`);
+- `release.env` records `IMAGE_DIGEST` (and `PREVIOUS_DIGEST`), and an automatic rollback restarts the previous release from its recorded digest rather than whatever its tag points at now;
+- `:latest` is moved to the digest.
+
+```yaml
+jobs:
+    image:
+        outputs:
+            digest: ${{ steps.build.outputs.digest }}
+        steps:
+            - id: build
+              uses: docker/build-push-action@<sha>
+              with:
+                  push: true
+                  tags: ghcr.io/me/myapp:${{ github.sha }}
+    deploy:
+        needs: image
+        steps:
+            - uses: Jubstaaa/deploy-actions/compose@<sha>
+              with:
+                  # ...
+                  tag: ${{ github.sha }}
+                  image-digest: ${{ needs.image.outputs.digest }}
+```
+
+Without `image-digest`, the action behaves exactly as before.
+
 Point `health-url` at an endpoint that reads the database (e.g. `http://127.0.0.1:3000/api/health`) rather than `/`, so a release whose migration broke its data fails the gate and is rolled back.
 
-Rollback by hand: re-run the deploy with an older commit SHA as `tag`. With the default `keep-images`, only the live and the previous tag stay on the host; an older tag is pulled from the registry again. For an app with SQLite, add `restore-snapshot: true` when that older release cannot run on the current schema (see below).
+Rollback by hand: re-run the deploy with an older commit SHA as `tag` (and its digest as `image-digest`, from that release's `release.env` or build log, to pin it). With the default `keep-images`, only the live and the previous tag stay on the host; an older tag is pulled from the registry again. For an app with SQLite, add `restore-snapshot: true` when that older release cannot run on the current schema (see below).
 
 ### SQLite snapshots
 

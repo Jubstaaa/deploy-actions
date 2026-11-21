@@ -2,7 +2,8 @@ name: Health-gated compose deploy
 description: >-
     Deploys one image tag with `docker compose up --wait`, rolls back to the previously
     running tag when the new one never becomes healthy, removes this app's old images,
-    and moves :latest to the released tag. Optionally snapshots SQLite databases before
+    and moves :latest to the released image. With image-digest, the exact tested image
+    is pulled by digest and verified in the running container. Optionally snapshots SQLite databases before
     each release and puts them back on rollback. Expects the `ssh` action to have set up the host alias first, and the compose
     file to use `image: <image>:${IMAGE_TAG:-latest}`.
 inputs:
@@ -30,6 +31,14 @@ inputs:
     tag:
         description: Tag to deploy, normally the full commit SHA.
         required: true
+    image-digest:
+        description: >-
+            Digest of the tested image (sha256:...), e.g. the build job's docker/build-push-action
+            `digest` output. When set, <image>@<digest> is pulled and run under `tag`, the running
+            container must have that image's ID or the release is rolled back, the digest is
+            recorded in release.env, and :latest is moved to it. Empty keeps the tag-only behaviour.
+        required: false
+        default: ''
     health-url:
         description: >-
             URL checked from the host after compose reports healthy, e.g. http://127.0.0.1:3000/.
@@ -74,7 +83,7 @@ inputs:
         required: false
         default: 'false'
     promote-latest:
-        description: Point :latest at the released tag after a healthy deploy (needs a registry login on the runner).
+        description: Point :latest at the released image (its digest when image-digest is set) after a healthy deploy (needs a registry login on the runner).
         required: false
         default: 'true'
 runs:
@@ -84,11 +93,13 @@ runs:
           shell: bash
           env:
               TAG: ${{ inputs.tag }}
+              DIGEST: ${{ inputs.image-digest }}
               KEEP: ${{ inputs.keep-images }}
               KEEP_SNAPSHOTS: ${{ inputs.keep-snapshots }}
               RESTORE_SNAPSHOT: ${{ inputs.restore-snapshot }}
           run: |
               [[ "$TAG" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::invalid image tag"; exit 1; }
+              [[ -z "$DIGEST" || "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::image-digest must be sha256:<64 hex characters>"; exit 1; }
               [[ "$KEEP" =~ ^[0-9]+$ ]] || { echo "::error::keep-images must be a whole number"; exit 1; }
               [[ "$KEEP_SNAPSHOTS" =~ ^[1-9][0-9]*$ ]] || { echo "::error::keep-snapshots must be a whole number of at least 1"; exit 1; }
               [[ "$RESTORE_SNAPSHOT" == true || "$RESTORE_SNAPSHOT" == false ]] || { echo "::error::restore-snapshot must be true or false"; exit 1; }
@@ -114,6 +125,7 @@ runs:
               SQLITE_DBS: ${{ inputs.sqlite-snapshot }}
               KEEP_SNAPSHOTS: ${{ inputs.keep-snapshots }}
               RESTORE_SNAPSHOT: ${{ inputs.restore-snapshot }}
+              DIGEST: ${{ inputs.image-digest }}
           # The token travels on stdin, never as an argument visible in `ps`. ssh joins
           # its arguments into one string for the remote shell, so each one is quoted
           # with %q first and none can inject shell syntax. The database list is joined onto
@@ -121,7 +133,7 @@ runs:
           run: |
               SQLITE_DBS=${SQLITE_DBS//$'\n'/ }
               printf -v args '%q ' "$APP_DIR" "$SERVICE" "$CONTAINER" "$IMAGE" "$TAG" "$HEALTH_URL" "$REGISTRY_USER" \
-                  "$SQLITE_DBS" "$KEEP_SNAPSHOTS" "$RESTORE_SNAPSHOT"
+                  "$SQLITE_DBS" "$KEEP_SNAPSHOTS" "$RESTORE_SNAPSHOT" "$DIGEST"
               { printf '%s\n' "$REGISTRY_TOKEN"; cat "$GITHUB_ACTION_PATH/remote-deploy.sh"; } |
                   ssh "$HOST" "bash -c 'read -r REGISTRY_TOKEN; export REGISTRY_TOKEN; exec bash -s -- \"\$@\"' _ $args"
         - name: Prune this app's old images
@@ -143,4 +155,9 @@ runs:
           env:
               IMAGE: ${{ inputs.image }}
               TAG: ${{ inputs.tag }}
-          run: docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE:$TAG"
+              DIGEST: ${{ inputs.image-digest }}
+          # By digest when one is given, so a tag re-pushed meanwhile cannot become :latest.
+          run: |
+              source="$IMAGE:$TAG"
+              [[ -z "$DIGEST" ]] || source="$IMAGE@$DIGEST"
+              docker buildx imagetools create --tag "$IMAGE:latest" "$source"
