@@ -1,0 +1,165 @@
+name: Quality gate
+
+# The repo-gate checks as one reusable job, so a new project gets them by
+# calling this workflow instead of copying a check job that then drifts.
+# Each step runs the project's own package.json script of the same name, so
+# the tool's configuration and version stay in the project.
+on:
+    workflow_call:
+        inputs:
+            runtime:
+                description: 'bun (bun install --frozen-lockfile, bun run) or node (npm ci, npm run).'
+                type: string
+                default: bun
+            node-version-file:
+                description: 'File setup-node reads the Node version from, relative to the repository root. Defaults to <working-directory>/package.json for runtime node; with runtime bun, Node is installed only when this is set.'
+                type: string
+                default: ''
+            working-directory:
+                description: 'Directory holding package.json and the lockfile.'
+                type: string
+                default: .
+            format:
+                description: 'Run the format:check script.'
+                type: boolean
+                default: true
+            lint:
+                description: 'Run the lint script.'
+                type: boolean
+                default: true
+            typecheck:
+                description: 'Run the typecheck script.'
+                type: boolean
+                default: true
+            test:
+                description: 'Run the test script.'
+                type: boolean
+                default: true
+            audit:
+                description: 'Run the audit script (e.g. bun audit --audit-level=high).'
+                type: boolean
+                default: true
+            knip:
+                description: 'Run the knip script.'
+                type: boolean
+                default: true
+            jscpd:
+                description: 'Run the jscpd script.'
+                type: boolean
+                default: true
+            depcruise:
+                description: 'Run the depcruise script.'
+                type: boolean
+                default: true
+            build:
+                description: 'Run the build script.'
+                type: boolean
+                default: true
+            trivy:
+                description: 'Trivy filesystem scan of the repository: vulnerabilities, secrets, misconfiguration; HIGH and CRITICAL with a fix fail.'
+                type: boolean
+                default: true
+            trivy-skip-dirs:
+                description: 'Comma-separated directories Trivy skips: installed and built output.'
+                type: string
+                default: '**/node_modules,**/.next,**/out,**/dist,**/build,**/coverage'
+            actionlint:
+                description: 'Lint the repository workflows with actionlint (and shellcheck on their run steps).'
+                type: boolean
+                default: true
+
+permissions:
+    contents: read
+
+jobs:
+    gate:
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        # Not the caller's group: a called workflow that shares its caller's
+        # concurrency group waits on, or cancels, its own caller.
+        concurrency:
+            group: quality-gate-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working-directory }}
+            cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+        defaults:
+            run:
+                working-directory: ${{ inputs.working-directory }}
+        env:
+            RUN: ${{ inputs.runtime == 'node' && 'npm run' || 'bun run' }}
+        steps:
+            - name: Check inputs
+              env:
+                  RUNTIME: ${{ inputs.runtime }}
+              working-directory: .
+              run: |
+                  case "$RUNTIME" in
+                      bun | node) ;;
+                      *) echo "::error::runtime must be bun or node, got '$RUNTIME'"; exit 1 ;;
+                  esac
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+            - if: inputs.runtime == 'bun'
+              uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+              with:
+                  bun-version-file: ${{ inputs.working-directory }}/package.json
+            - if: inputs.runtime == 'node' || inputs.node-version-file != ''
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: ${{ inputs.node-version-file || format('{0}/package.json', inputs.working-directory) }}
+            - name: Install
+              env:
+                  RUNTIME: ${{ inputs.runtime }}
+              run: |
+                  if [ "$RUNTIME" = node ]; then
+                      npm ci
+                  else
+                      bun install --frozen-lockfile
+                  fi
+
+            # Fast, author-fixable feedback first.
+            - if: inputs.format
+              run: $RUN format:check
+            - if: inputs.lint
+              run: $RUN lint
+            - if: inputs.typecheck
+              run: $RUN typecheck
+            - if: inputs.test
+              run: $RUN test
+            - if: inputs.knip
+              run: $RUN knip
+            - if: inputs.jscpd
+              run: $RUN jscpd
+            - if: inputs.depcruise
+              run: $RUN depcruise
+            - if: inputs.build
+              run: $RUN build
+            - name: actionlint
+              if: inputs.actionlint
+              working-directory: .
+              run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color
+
+            # Last, so a new advisory never hides lint or test feedback.
+            - if: inputs.audit
+              run: $RUN audit
+            - name: Trivy (vulnerabilities, secrets, misconfiguration)
+              if: inputs.trivy
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              with:
+                  scan-type: fs
+                  # The whole repository: a secret anywhere matters, not only
+                  # under working-directory.
+                  scan-ref: .
+                  scanners: vuln,secret,misconfig
+                  severity: HIGH,CRITICAL
+                  # A finding with no fixed version would block every PR with
+                  # nothing to act on; the audit step reports those advisories.
+                  ignore-unfixed: true
+                  exit-code: '1'
+                  skip-dirs: ${{ inputs.trivy-skip-dirs }}
+                  # Explicit, so a scanner upgrade shows up in review.
+                  version: v0.76.2
+                  # Outside the checkout, so the database never lands in the
+                  # scanned tree; and no per-PR cache, which no other PR could
+                  # restore.
+                  cache-dir: ${{ runner.temp }}/trivy
+                  cache: 'false'
