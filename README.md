@@ -1,6 +1,6 @@
 # deploy-actions
 
-Composite GitHub Actions shared by my apps and static sites on a droplet, so every app deploys the same way and a fix lands in one place.
+Composite GitHub Actions and a reusable quality-gate workflow shared by my apps and static sites on a droplet, so every app is checked and deployed the same way and a fix lands in one place.
 
 ## `ssh`
 
@@ -93,9 +93,31 @@ The first run turns the existing site directory into the `initial` release.
 
 Rollback by hand: re-run the deploy for an older commit, or point the symlink at a kept release.
 
+## `quality-gate` (reusable workflow)
+
+The pull-request gate every project runs as its required `check`:
+
+```yaml
+jobs: { check: { uses: Jubstaaa/deploy-actions/.github/workflows/quality-gate.yml@<sha> } }
+```
+
+The status check it reports is **`check / gate`** (`<caller job> / <called job>`): that is the context to require in the `protect-main` ruleset.
+
+Each step runs the project's own `package.json` script, so the tool's version and configuration stay in the project: `format:check`, `lint`, `typecheck`, `test`, `knip`, `jscpd`, `depcruise`, `build`, then `audit` last so a new advisory never hides author-fixable feedback. Besides those it runs `actionlint` (with shellcheck) over the repository's workflows and a Trivy filesystem scan of the whole repository (vulnerabilities, secrets, misconfiguration; HIGH and CRITICAL that have a fix fail; database cached outside the checkout).
+
+| Input | Default | |
+| --- | --- | --- |
+| `runtime` | `bun` | `bun` (`bun install --frozen-lockfile`, `bun run`) or `node` (`npm ci`, `npm run`) |
+| `node-version-file` | `''` | Node version for setup-node, relative to the repository root; `<working-directory>/package.json` for `node`. With `bun`, Node is installed only when set |
+| `working-directory` | `.` | where `package.json` and the lockfile live |
+| `format`, `lint`, `typecheck`, `test`, `audit`, `knip`, `jscpd`, `depcruise`, `build`, `trivy`, `actionlint` | `true` | turn one step off, e.g. `build: false` for a package with nothing to build |
+| `trivy-skip-dirs` | installed and built output | comma-separated globs Trivy skips |
+
+The job has `contents: read` only, checks out without persisting credentials, and uses its own concurrency group (cancelled on a newer push to the same pull request). Turning a step off is for a step that has nothing to check, never for a failing one: fix it or commit a baseline.
+
 ## Development
 
-`shellcheck` and `actionlint` lint every script and workflow; `bats test` runs the host-side scripts against a fake `docker` CLI, real `sqlite3` and a temporary sites root (Linux: the scripts use GNU coreutils). CI runs both on every pull request.
+`shellcheck` and `actionlint` lint every script and workflow; `bats test` runs the host-side scripts against a fake `docker` CLI, real `sqlite3` and a temporary sites root (Linux: the scripts use GNU coreutils). CI runs both on every pull request, and runs `quality-gate` against the minimal bun and npm projects in `test/fixtures/quality-gate/`.
 
 ## License
 

@@ -1,0 +1,16 @@
+{
+    "name": "quality-gate-fixture-bun",
+    "private": true,
+    "scripts": {
+        "format:check": "echo format:check ok",
+        "lint": "echo lint ok",
+        "typecheck": "echo typecheck ok",
+        "test": "echo test ok",
+        "audit": "echo audit ok",
+        "knip": "echo knip ok",
+        "jscpd": "echo jscpd ok",
+        "depcruise": "echo depcruise ok",
+        "build": "echo build ok"
+    },
+    "packageManager": "bun@1.4.4"
+}

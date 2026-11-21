@@ -34,3 +34,20 @@ jobs:
               run: bats test
             - name: bats as root (snapshots switch to the database owner)
               run: sudo bats test/compose-snapshots.bats
+
+    # Runs the reusable quality gate against minimal bun and npm projects, so a
+    # broken input, runtime branch or pinned step fails here, not in a caller.
+    quality-gate:
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - runtime: bun
+                      node-version-file: ''
+                    - runtime: node
+                      node-version-file: test/fixtures/quality-gate/node/.nvmrc
+        uses: ./.github/workflows/quality-gate.yml
+        with:
+            runtime: ${{ matrix.runtime }}
+            node-version-file: ${{ matrix.node-version-file }}
+            working-directory: test/fixtures/quality-gate/${{ matrix.runtime }}

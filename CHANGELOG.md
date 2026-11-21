@@ -2,6 +2,12 @@
 
 All notable changes to these actions. Versions follow [Semantic Versioning](https://semver.org/); consumers pin a release by commit SHA.
 
+## Unreleased
+
+### Added
+
+- `quality-gate`: reusable workflow (`on: workflow_call`) that runs a project's format check, lint, typecheck, test, knip, jscpd, dependency-cruiser, build and audit scripts, plus actionlint and a Trivy filesystem scan, with `runtime` (`bun`/`node`), `node-version-file`, `working-directory` and a toggle per step. CI runs it against bun and npm fixture projects.
+
 ## 1.4.0 — 2026-11-20
 
 ### Added
