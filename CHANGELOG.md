@@ -14,6 +14,13 @@ All notable changes to these actions. Versions follow [Semantic Versioning](http
 
 Without `image-digest`, behaviour and `release.env` are unchanged.
 
+## [1.8.0](https://github.com/Jubstaaa/deploy-actions/compare/v1.7.0...v1.8.0) (2026-11-27)
+
+
+### Features
+
+* **quality-gate:** add gitleaks and project-specific scripts ([#11](https://github.com/Jubstaaa/deploy-actions/issues/11)) ([1b13c52](https://github.com/Jubstaaa/deploy-actions/commit/1b13c529779b905f3f441f0dba53d31bb003c8dd))
+
 ## [1.7.0](https://github.com/Jubstaaa/deploy-actions/compare/v1.6.0...v1.7.0) (2026-11-27)
 
 
