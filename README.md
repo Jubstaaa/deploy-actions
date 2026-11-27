@@ -153,6 +153,52 @@ Each step runs the project's own `package.json` script, so the tool's version an
 
 The job has `contents: read` only, checks out without persisting credentials, and uses its own concurrency group (cancelled on a newer push to the same pull request). Turning a step off is for a step that has nothing to check, never for a failing one: fix it or commit a baseline.
 
+## `cloudflare-deploy` (reusable workflow)
+
+The Workers counterpart of `compose`: build the project, check the output is
+whole, and hand it to wrangler.
+
+```yaml
+jobs:
+    deploy:
+        uses: Jubstaaa/deploy-actions/.github/workflows/cloudflare-deploy.yml@<sha>
+        with:
+            verify: verify:export
+        secrets:
+            CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+            CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+```
+
+| Input | Default | |
+| --- | --- | --- |
+| `runtime` | `bun` | `bun` or `node` |
+| `working-directory` | `.` | where `package.json`, the lockfile and the wrangler config live |
+| `build` | `build` | the script that produces what wrangler uploads; empty skips it |
+| `verify` | `''` | a script run after the build and before the upload |
+| `command` | `deploy` | `deploy` publishes immediately; `versions upload` uploads without serving, for a release promoted later |
+| `config` | `''` | a wrangler config file other than the one wrangler finds |
+| `environment` | `''` | a GitHub environment, for its protection rules |
+| `env` | `''` | extra `KEY=value` lines for the build and verify steps; never secrets |
+
+wrangler comes from the project's own dependencies, so its version is the one in
+the lockfile and Renovate moves it like any other.
+
+**`verify` is the important one.** These projects deploy a static export, and a
+half-written one replaces the live site just as happily as a whole one. The
+check belongs in the project, as a script it can also run locally, not as a
+block of shell inside a workflow.
+
+The job never cancels in progress — a deploy interrupted halfway is worse than a
+slow one — and it writes wrangler's output to the job summary, so what went out
+is readable without opening the log.
+
+### Staging and production from the same artifact
+
+`command: versions upload` uploads a version without serving it. A release then
+promotes that exact version rather than building again, which is what keeps the
+two environments honest: production is a staging build that was approved, not a
+rebuild that happens to come from the same commit.
+
 ## Why some of this looks the way it does
 
 The workflows and actions carry no comments, by the same rule as the code: a
