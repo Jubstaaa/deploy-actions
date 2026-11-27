@@ -168,6 +168,10 @@ comment cannot be run, so it rots silently. What was worth keeping is here.
 - **`static`.** A new release is compared with the live one by content, not
   mtime — every build rewrites mtimes — so unchanged files become hard links
   instead of copies.
+- **Releases.** The release pull request is opened with a personal access token
+  rather than `GITHUB_TOKEN`: one opened with the built-in token starts no
+  workflows, so its required checks would never report and the release would sit
+  blocked behind the branch ruleset.
 - **`quality-gate`, concurrency.** The gate uses its own group rather than the
   caller's: a called workflow that shares its caller's group waits on, or
   cancels, its own caller.
