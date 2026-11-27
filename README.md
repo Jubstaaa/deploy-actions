@@ -151,6 +151,32 @@ Each step runs the project's own `package.json` script, so the tool's version an
 
 The job has `contents: read` only, checks out without persisting credentials, and uses its own concurrency group (cancelled on a newer push to the same pull request). Turning a step off is for a step that has nothing to check, never for a failing one: fix it or commit a baseline.
 
+## Why some of this looks the way it does
+
+The workflows and actions carry no comments, by the same rule as the code: a
+comment cannot be run, so it rots silently. What was worth keeping is here.
+
+- **`compose`, remote commands.** A registry token travels on stdin, never as an
+  argument, so it cannot be read out of `ps` on the host. `ssh` joins its
+  arguments into one string for the remote shell, so each one is quoted with
+  `%q` first and none can inject shell syntax; the database list is joined onto
+  one line so `%q` never needs `$'…'` quoting, which a non-bash login shell
+  would not parse.
+- **`compose`, image cleanup.** It runs after the release is live and healthy,
+  so a failure there only warns. `:latest` moves by digest when one is given, so
+  a tag re-pushed in the meantime cannot become `:latest`.
+- **`static`.** A new release is compared with the live one by content, not
+  mtime — every build rewrites mtimes — so unchanged files become hard links
+  instead of copies.
+- **`quality-gate`, concurrency.** The gate uses its own group rather than the
+  caller's: a called workflow that shares its caller's group waits on, or
+  cancels, its own caller.
+- **`quality-gate`, Trivy.** `ignore-unfixed` is on because a finding with no
+  fixed version would block every pull request with nothing to act on; the
+  `audit` step still reports those advisories. The database is cached outside
+  the checkout, so it never lands in the scanned tree, and per-pull-request
+  caching is off because no other pull request could restore it.
+
 ## Development
 
 `shellcheck` and `actionlint` lint every script and workflow; `bats test` runs the host-side scripts against a fake `docker` CLI, real `sqlite3` and a temporary sites root (Linux: the scripts use GNU coreutils). CI runs both on every pull request, and runs `quality-gate` against the minimal bun and npm projects in `test/fixtures/quality-gate/`.
