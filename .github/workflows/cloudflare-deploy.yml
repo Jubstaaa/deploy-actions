@@ -1,0 +1,152 @@
+name: Cloudflare deploy
+
+on:
+    workflow_call:
+        inputs:
+            runtime:
+                description: 'bun (bun install --frozen-lockfile, bun run) or node (npm ci, npm run).'
+                type: string
+                default: bun
+            working-directory:
+                description: 'Directory holding package.json, the lockfile and the wrangler config.'
+                type: string
+                default: .
+            build:
+                description: 'package.json script that produces what wrangler uploads. Empty skips the build.'
+                type: string
+                default: build
+            verify:
+                description: >-
+                    package.json script run after the build and before the
+                    upload. This is where a project checks that its output is
+                    whole: a half-written export would otherwise replace the
+                    live site.
+                type: string
+                default: ''
+            command:
+                description: >-
+                    wrangler command. "deploy" publishes immediately.
+                    "versions upload" uploads a version without serving it,
+                    for a release that is promoted later.
+                type: string
+                default: deploy
+            config:
+                description: 'wrangler config file, when it is not the one wrangler finds by itself.'
+                type: string
+                default: ''
+            environment:
+                description: 'GitHub environment to deploy through, for its protection rules and secrets.'
+                type: string
+                default: ''
+            env:
+                description: >-
+                    Extra environment for the build and verify steps, as
+                    KEY=value lines. Workflow inputs are recorded in the run
+                    log, so these are placeholders and flags, never secrets.
+                type: string
+                default: ''
+        secrets:
+            CLOUDFLARE_API_TOKEN:
+                required: true
+            CLOUDFLARE_ACCOUNT_ID:
+                required: true
+
+permissions:
+    contents: read
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        environment: ${{ inputs.environment }}
+        concurrency:
+            group: cloudflare-deploy-${{ github.workflow }}-${{ inputs.working-directory }}
+            cancel-in-progress: false
+        defaults:
+            run:
+                working-directory: ${{ inputs.working-directory }}
+        env:
+            RUN: ${{ inputs.runtime == 'node' && 'npm run' || 'bun run' }}
+            EXEC: ${{ inputs.runtime == 'node' && 'npx' || 'bunx' }}
+        steps:
+            - name: Check inputs
+              env:
+                  RUNTIME: ${{ inputs.runtime }}
+                  COMMAND: ${{ inputs.command }}
+              working-directory: .
+              run: |
+                  case "$RUNTIME" in
+                      bun | node) ;;
+                      *) echo "::error::runtime must be bun or node, got '$RUNTIME'"; exit 1 ;;
+                  esac
+                  case "$COMMAND" in
+                      deploy | 'versions upload') ;;
+                      *) echo "::error::command must be deploy or 'versions upload', got '$COMMAND'"; exit 1 ;;
+                  esac
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+            - if: inputs.runtime == 'bun'
+              uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+              with:
+                  bun-version-file: ${{ inputs.working-directory }}/package.json
+            - if: inputs.runtime == 'node'
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: ${{ inputs.working-directory }}/package.json
+            - name: Install
+              env:
+                  RUNTIME: ${{ inputs.runtime }}
+              run: |
+                  if [ "$RUNTIME" = node ]; then
+                      npm ci
+                  else
+                      bun install --frozen-lockfile
+                  fi
+
+            - name: Environment for the scripts
+              if: inputs.env != ''
+              env:
+                  EXTRA_ENV: ${{ inputs.env }}
+              run: |
+                  while IFS= read -r line; do
+                      [ -n "$line" ] || continue
+                      case "$line" in
+                          [A-Za-z_]*=*) printf '%s\n' "$line" >> "$GITHUB_ENV" ;;
+                          *) echo "::error::env must be KEY=value lines, got '$line'"; exit 1 ;;
+                      esac
+                  done <<< "$EXTRA_ENV"
+
+            - if: inputs.build != ''
+              env:
+                  BUILD: ${{ inputs.build }}
+              run: $RUN "$BUILD"
+
+            - if: inputs.verify != ''
+              env:
+                  VERIFY: ${{ inputs.verify }}
+              run: $RUN "$VERIFY"
+
+            - name: Upload to Cloudflare
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  COMMAND: ${{ inputs.command }}
+                  CONFIG: ${{ inputs.config }}
+              run: |
+                  set -o pipefail
+                  args=""
+                  [ -z "$CONFIG" ] || args="-c $CONFIG"
+                  # shellcheck disable=SC2086
+                  $EXEC wrangler $COMMAND $args | tee "$RUNNER_TEMP/wrangler.log"
+
+            - name: Report what was deployed
+              if: always()
+              run: |
+                  {
+                      echo "## Cloudflare"
+                      echo
+                      echo '```'
+                      tail -n 20 "$RUNNER_TEMP/wrangler.log" 2>/dev/null || echo 'wrangler produced no output'
+                      echo '```'
+                  } >> "$GITHUB_STEP_SUMMARY"
