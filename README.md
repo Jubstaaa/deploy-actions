@@ -136,7 +136,7 @@ jobs: { check: { uses: Jubstaaa/deploy-actions/.github/workflows/quality-gate.ym
 
 The status check it reports is **`check / gate`** (`<caller job> / <called job>`): that is the context to require in the `protect-main` ruleset.
 
-Each step runs the project's own `package.json` script, so the tool's version and configuration stay in the project: `format:check`, `lint`, `typecheck`, `test`, `knip`, `jscpd`, `depcruise`, `build`, then `audit` last so a new advisory never hides author-fixable feedback. Besides those it runs `actionlint` (with shellcheck) over the repository's workflows and a Trivy filesystem scan of the whole repository (vulnerabilities, secrets, misconfiguration; HIGH and CRITICAL that have a fix fail; database cached outside the checkout).
+Each step runs the project's own `package.json` script, so the tool's version and configuration stay in the project: `format:check`, `lint`, `typecheck`, `test`, `knip`, `jscpd`, `depcruise`, `build`, anything named in `scripts`, then `audit` last so a new advisory never hides author-fixable feedback. Besides those it runs `actionlint` (with shellcheck) over the repository's workflows, a Trivy filesystem scan of the whole repository (vulnerabilities, secrets, misconfiguration; HIGH and CRITICAL that have a fix fail; database cached outside the checkout), and, with `gitleaks: true`, a secret scan of the git history — on a pull request every commit in it, so a secret added and removed again within the branch is still caught.
 
 | Input | Default | |
 | --- | --- | --- |
@@ -145,6 +145,9 @@ Each step runs the project's own `package.json` script, so the tool's version an
 | `working-directory` | `.` | where `package.json` and the lockfile live |
 | `format`, `lint`, `typecheck`, `test`, `audit`, `knip`, `jscpd`, `depcruise`, `build`, `trivy`, `actionlint` | `true` | turn one step off, e.g. `build: false` for a package with nothing to build |
 | `trivy-skip-dirs` | installed and built output | comma-separated globs Trivy skips |
+| `gitleaks` | `false` | scan the git history for committed secrets; also deepens the checkout, since it reads commits rather than the working tree |
+| `scripts` | `''` | extra `package.json` script names, one per line, run after the standard ones — for checks only this project has |
+| `env` | `''` | extra environment for the script steps, as `KEY=value` lines; placeholders and flags only, never secrets (workflow inputs are recorded in the run log) |
 
 The job has `contents: read` only, checks out without persisting credentials, and uses its own concurrency group (cancelled on a newer push to the same pull request). Turning a step off is for a step that has nothing to check, never for a failing one: fix it or commit a baseline.
 

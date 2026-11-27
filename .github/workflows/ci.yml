@@ -51,5 +51,8 @@ jobs:
             runtime: ${{ matrix.runtime }}
             node-version-file: ${{ matrix.node-version-file }}
             working-directory: test/fixtures/quality-gate/${{ matrix.runtime }}
+            gitleaks: true
+            scripts: |
+                probe:extra
             env: |
                 GATE_ENV_PROBE=passed
