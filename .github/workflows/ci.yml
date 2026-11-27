@@ -35,8 +35,6 @@ jobs:
             - name: bats as root (snapshots switch to the database owner)
               run: sudo bats test/compose-snapshots.bats
 
-    # Runs the reusable quality gate against minimal bun and npm projects, so a
-    # broken input, runtime branch or pinned step fails here, not in a caller.
     quality-gate:
         strategy:
             fail-fast: false
@@ -51,5 +49,8 @@ jobs:
             runtime: ${{ matrix.runtime }}
             node-version-file: ${{ matrix.node-version-file }}
             working-directory: test/fixtures/quality-gate/${{ matrix.runtime }}
+            gitleaks: true
+            scripts: |
+                probe:extra
             env: |
                 GATE_ENV_PROBE=passed

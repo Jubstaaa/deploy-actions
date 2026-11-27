@@ -136,7 +136,7 @@ jobs: { check: { uses: Jubstaaa/deploy-actions/.github/workflows/quality-gate.ym
 
 The status check it reports is **`check / gate`** (`<caller job> / <called job>`): that is the context to require in the `protect-main` ruleset.
 
-Each step runs the project's own `package.json` script, so the tool's version and configuration stay in the project: `format:check`, `lint`, `typecheck`, `test`, `knip`, `jscpd`, `depcruise`, `build`, then `audit` last so a new advisory never hides author-fixable feedback. Besides those it runs `actionlint` (with shellcheck) over the repository's workflows and a Trivy filesystem scan of the whole repository (vulnerabilities, secrets, misconfiguration; HIGH and CRITICAL that have a fix fail; database cached outside the checkout).
+Each step runs the project's own `package.json` script, so the tool's version and configuration stay in the project: `format:check`, `lint`, `typecheck`, `test`, `knip`, `jscpd`, `depcruise`, `build`, anything named in `scripts`, then `audit` last so a new advisory never hides author-fixable feedback. Besides those it runs `actionlint` (with shellcheck) over the repository's workflows, a Trivy filesystem scan of the whole repository (vulnerabilities, secrets, misconfiguration; HIGH and CRITICAL that have a fix fail; database cached outside the checkout), and, with `gitleaks: true`, a secret scan of the git history — on a pull request every commit in it, so a secret added and removed again within the branch is still caught.
 
 | Input | Default | |
 | --- | --- | --- |
@@ -145,8 +145,37 @@ Each step runs the project's own `package.json` script, so the tool's version an
 | `working-directory` | `.` | where `package.json` and the lockfile live |
 | `format`, `lint`, `typecheck`, `test`, `audit`, `knip`, `jscpd`, `depcruise`, `build`, `trivy`, `actionlint` | `true` | turn one step off, e.g. `build: false` for a package with nothing to build |
 | `trivy-skip-dirs` | installed and built output | comma-separated globs Trivy skips |
+| `gitleaks` | `false` | scan the git history for committed secrets; also deepens the checkout, since it reads commits rather than the working tree |
+| `scripts` | `''` | extra `package.json` script names, one per line, run after the standard ones — for checks only this project has |
+| `env` | `''` | extra environment for the script steps, as `KEY=value` lines; placeholders and flags only, never secrets (workflow inputs are recorded in the run log) |
 
 The job has `contents: read` only, checks out without persisting credentials, and uses its own concurrency group (cancelled on a newer push to the same pull request). Turning a step off is for a step that has nothing to check, never for a failing one: fix it or commit a baseline.
+
+## Why some of this looks the way it does
+
+The workflows and actions carry no comments, by the same rule as the code: a
+comment cannot be run, so it rots silently. What was worth keeping is here.
+
+- **`compose`, remote commands.** A registry token travels on stdin, never as an
+  argument, so it cannot be read out of `ps` on the host. `ssh` joins its
+  arguments into one string for the remote shell, so each one is quoted with
+  `%q` first and none can inject shell syntax; the database list is joined onto
+  one line so `%q` never needs `$'…'` quoting, which a non-bash login shell
+  would not parse.
+- **`compose`, image cleanup.** It runs after the release is live and healthy,
+  so a failure there only warns. `:latest` moves by digest when one is given, so
+  a tag re-pushed in the meantime cannot become `:latest`.
+- **`static`.** A new release is compared with the live one by content, not
+  mtime — every build rewrites mtimes — so unchanged files become hard links
+  instead of copies.
+- **`quality-gate`, concurrency.** The gate uses its own group rather than the
+  caller's: a called workflow that shares its caller's group waits on, or
+  cancels, its own caller.
+- **`quality-gate`, Trivy.** `ignore-unfixed` is on because a finding with no
+  fixed version would block every pull request with nothing to act on; the
+  `audit` step still reports those advisories. The database is cached outside
+  the checkout, so it never lands in the scanned tree, and per-pull-request
+  caching is off because no other pull request could restore it.
 
 ## Development
 

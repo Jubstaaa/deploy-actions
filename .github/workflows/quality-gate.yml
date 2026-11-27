@@ -1,9 +1,5 @@
 name: Quality gate
 
-# The repo-gate checks as one reusable job, so a new project gets them by
-# calling this workflow instead of copying a check job that then drifts.
-# Each step runs the project's own package.json script of the same name, so
-# the tool's configuration and version stay in the project.
 on:
     workflow_call:
         inputs:
@@ -67,6 +63,20 @@ on:
                 description: 'Lint the repository workflows with actionlint (and shellcheck on their run steps).'
                 type: boolean
                 default: true
+            gitleaks:
+                description: >-
+                    Scan the git history for committed secrets. On a pull
+                    request, every commit in it; otherwise the whole history.
+                    Needs the full history, so it also deepens the checkout.
+                type: boolean
+                default: false
+            scripts:
+                description: >-
+                    Extra package.json scripts to run after the standard ones,
+                    one name per line. For checks only this project has, such
+                    as a committed-migration or generated-file check.
+                type: string
+                default: ''
             env:
                 description: >-
                     Extra environment for the script steps, as KEY=value lines.
@@ -83,8 +93,6 @@ jobs:
     gate:
         runs-on: ubuntu-latest
         timeout-minutes: 20
-        # Not the caller's group: a called workflow that shares its caller's
-        # concurrency group waits on, or cancels, its own caller.
         concurrency:
             group: quality-gate-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working-directory }}
             cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -106,6 +114,7 @@ jobs:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
                   persist-credentials: false
+                  fetch-depth: ${{ inputs.gitleaks && 0 || 1 }}
             - if: inputs.runtime == 'bun'
               uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
               with:
@@ -137,7 +146,6 @@ jobs:
                       esac
                   done <<< "$EXTRA_ENV"
 
-            # Fast, author-fixable feedback first.
             - if: inputs.format
               run: $RUN format:check
             - if: inputs.lint
@@ -154,12 +162,29 @@ jobs:
               run: $RUN depcruise
             - if: inputs.build
               run: $RUN build
+
+            - name: Project scripts
+              if: inputs.scripts != ''
+              env:
+                  SCRIPTS: ${{ inputs.scripts }}
+              run: |
+                  while IFS= read -r name; do
+                      name=$(echo "$name" | tr -d '[:space:]')
+                      [ -n "$name" ] || continue
+                      case "$name" in
+                          *[!a-zA-Z0-9:._-]*)
+                              echo "::error::script name must be [A-Za-z0-9:._-], got '$name'"; exit 1 ;;
+                      esac
+                      echo "::group::$RUN $name"
+                      $RUN "$name"
+                      echo '::endgroup::'
+                  done <<< "$SCRIPTS"
+
             - name: actionlint
               if: inputs.actionlint
               working-directory: .
               run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color
 
-            # Last, so a new advisory never hides lint or test feedback.
             - if: inputs.audit
               run: $RUN audit
             - name: Trivy (vulnerabilities, secrets, misconfiguration)
@@ -167,20 +192,24 @@ jobs:
               uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
               with:
                   scan-type: fs
-                  # The whole repository: a secret anywhere matters, not only
-                  # under working-directory.
                   scan-ref: .
                   scanners: vuln,secret,misconfig
                   severity: HIGH,CRITICAL
-                  # A finding with no fixed version would block every PR with
-                  # nothing to act on; the audit step reports those advisories.
                   ignore-unfixed: true
                   exit-code: '1'
                   skip-dirs: ${{ inputs.trivy-skip-dirs }}
-                  # Explicit, so a scanner upgrade shows up in review.
                   version: v0.76.2
-                  # Outside the checkout, so the database never lands in the
-                  # scanned tree; and no per-PR cache, which no other PR could
-                  # restore.
                   cache-dir: ${{ runner.temp }}/trivy
                   cache: 'false'
+            - name: gitleaks
+              if: inputs.gitleaks
+              working-directory: .
+              env:
+                  GITLEAKS: ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+                  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+              run: |
+                  range="-m HEAD"
+                  [ -z "$BASE_SHA" ] || range="-m $BASE_SHA..HEAD"
+                  docker run --rm -v "$PWD:/repo" \
+                      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo \
+                      "$GITLEAKS" git /repo --redact --no-banner --log-opts="$range"

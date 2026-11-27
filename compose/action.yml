@@ -126,10 +126,6 @@ runs:
               KEEP_SNAPSHOTS: ${{ inputs.keep-snapshots }}
               RESTORE_SNAPSHOT: ${{ inputs.restore-snapshot }}
               DIGEST: ${{ inputs.image-digest }}
-          # The token travels on stdin, never as an argument visible in `ps`. ssh joins
-          # its arguments into one string for the remote shell, so each one is quoted
-          # with %q first and none can inject shell syntax. The database list is joined onto
-          # one line so %q never needs $'…' quoting, which a non-bash login shell would not parse.
           run: |
               SQLITE_DBS=${SQLITE_DBS//$'\n'/ }
               printf -v args '%q ' "$APP_DIR" "$SERVICE" "$CONTAINER" "$IMAGE" "$TAG" "$HEALTH_URL" "$REGISTRY_USER" \
@@ -144,7 +140,6 @@ runs:
               APP_DIR: ${{ inputs.app-dir }}
               IMAGE: ${{ inputs.image }}
               KEEP: ${{ inputs.keep-images }}
-          # The release is already live and healthy, so a failed cleanup only warns.
           run: |
               printf -v args '%q ' "$APP_DIR" "$IMAGE" "$KEEP"
               ssh "$HOST" "bash -s -- $args" <"$GITHUB_ACTION_PATH/prune-images.sh" ||
@@ -156,7 +151,6 @@ runs:
               IMAGE: ${{ inputs.image }}
               TAG: ${{ inputs.tag }}
               DIGEST: ${{ inputs.image-digest }}
-          # By digest when one is given, so a tag re-pushed meanwhile cannot become :latest.
           run: |
               source="$IMAGE:$TAG"
               [[ -z "$DIGEST" ]] || source="$IMAGE@$DIGEST"

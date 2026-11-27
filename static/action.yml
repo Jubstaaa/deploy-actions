@@ -55,8 +55,6 @@ runs:
               current=$(ssh "$HOST" "bash -s -- $args" <"$GITHUB_ACTION_PATH/release.sh")
               link_dest=()
               [[ -n "$current" ]] && link_dest=(--link-dest="$current")
-              # Compared by content, not mtime (every build rewrites mtimes), so files
-              # unchanged since the live release become hard links instead of copies.
               rsync -rlpgoD --checksum --delete "${link_dest[@]}" "$SOURCE_DIR/" "$HOST:$ROOT/_releases/$SITE/$RELEASE/"
         - name: Switch to the release
           shell: bash

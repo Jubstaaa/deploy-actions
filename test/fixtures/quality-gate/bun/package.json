@@ -10,7 +10,8 @@
         "knip": "echo knip ok",
         "jscpd": "echo jscpd ok",
         "depcruise": "echo depcruise ok",
-        "build": "test \"$GATE_ENV_PROBE\" = passed && echo build ok"
+        "build": "test \"$GATE_ENV_PROBE\" = passed && echo build ok",
+        "probe:extra": "echo probe:extra ok"
     },
     "packageManager": "bun@1.4.4"
 }
