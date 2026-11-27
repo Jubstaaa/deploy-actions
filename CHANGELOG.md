@@ -14,6 +14,13 @@ All notable changes to these actions. Versions follow [Semantic Versioning](http
 
 Without `image-digest`, behaviour and `release.env` are unchanged.
 
+## [1.7.0](https://github.com/Jubstaaa/deploy-actions/compare/v1.6.0...v1.7.0) (2026-11-27)
+
+
+### Features
+
+* **quality-gate:** pass build-time environment to the script steps ([#8](https://github.com/Jubstaaa/deploy-actions/issues/8)) ([2d89a0b](https://github.com/Jubstaaa/deploy-actions/commit/2d89a0ba8784055784783145002b89608ad29381))
+
 ## 1.5.0 — 2026-11-22
 
 ### Added
