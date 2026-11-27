@@ -14,6 +14,13 @@ All notable changes to these actions. Versions follow [Semantic Versioning](http
 
 Without `image-digest`, behaviour and `release.env` are unchanged.
 
+## [1.9.0](https://github.com/Jubstaaa/deploy-actions/compare/v1.8.0...v1.9.0) (2026-11-27)
+
+
+### Features
+
+* **quality-gate:** run jubstaa-doctor over the repository ([#14](https://github.com/Jubstaaa/deploy-actions/issues/14)) ([2971a89](https://github.com/Jubstaaa/deploy-actions/commit/2971a89fdb43ef214510ca3aef3431fd536f06ae))
+
 ## [1.8.0](https://github.com/Jubstaaa/deploy-actions/compare/v1.7.0...v1.8.0) (2026-11-27)
 
 
