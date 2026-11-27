@@ -70,6 +70,14 @@ on:
                     Needs the full history, so it also deepens the checkout.
                 type: boolean
                 default: false
+            doctor:
+                description: 'Run jubstaa-doctor over the repository: LICENSE, README, package.json fields, canonical script names, and no prose comments in YAML.'
+                type: boolean
+                default: true
+            doctor-version:
+                description: 'Version range of @jubstaa/config the doctor comes from.'
+                type: string
+                default: '^1'
             scripts:
                 description: >-
                     Extra package.json scripts to run after the standard ones,
@@ -179,6 +187,13 @@ jobs:
                       $RUN "$name"
                       echo '::endgroup::'
                   done <<< "$SCRIPTS"
+
+            - name: Repository checks
+              if: inputs.doctor
+              working-directory: .
+              env:
+                  DOCTOR_VERSION: ${{ inputs.doctor-version }}
+              run: npx --yes --package="@jubstaa/config@$DOCTOR_VERSION" jubstaa-doctor
 
             - name: actionlint
               if: inputs.actionlint
