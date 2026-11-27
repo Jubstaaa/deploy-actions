@@ -10,6 +10,6 @@
         "knip": "echo knip ok",
         "jscpd": "echo jscpd ok",
         "depcruise": "echo depcruise ok",
-        "build": "echo build ok"
+        "build": "test \"$GATE_ENV_PROBE\" = passed && echo build ok"
     }
 }

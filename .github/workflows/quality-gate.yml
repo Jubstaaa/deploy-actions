@@ -67,6 +67,14 @@ on:
                 description: 'Lint the repository workflows with actionlint (and shellcheck on their run steps).'
                 type: boolean
                 default: true
+            env:
+                description: >-
+                    Extra environment for the script steps, as KEY=value lines.
+                    A build that reads configuration at import time needs this.
+                    Workflow inputs are recorded in the run log, so these are
+                    placeholders and flags, never secrets.
+                type: string
+                default: ''
 
 permissions:
     contents: read
@@ -115,6 +123,19 @@ jobs:
                   else
                       bun install --frozen-lockfile
                   fi
+
+            - name: Environment for the scripts
+              if: inputs.env != ''
+              env:
+                  EXTRA_ENV: ${{ inputs.env }}
+              run: |
+                  while IFS= read -r line; do
+                      [ -n "$line" ] || continue
+                      case "$line" in
+                          [A-Za-z_]*=*) printf '%s\n' "$line" >> "$GITHUB_ENV" ;;
+                          *) echo "::error::env must be KEY=value lines, got '$line'"; exit 1 ;;
+                      esac
+                  done <<< "$EXTRA_ENV"
 
             # Fast, author-fixable feedback first.
             - if: inputs.format
