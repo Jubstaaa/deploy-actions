@@ -14,6 +14,13 @@ All notable changes to these actions. Versions follow [Semantic Versioning](http
 
 Without `image-digest`, behaviour and `release.env` are unchanged.
 
+## [2.0.1](https://github.com/Jubstaaa/deploy-actions/compare/v2.0.0...v2.0.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* describe the GitHub App release token in the README ([#26](https://github.com/Jubstaaa/deploy-actions/issues/26)) ([a674f84](https://github.com/Jubstaaa/deploy-actions/commit/a674f84c428bd319f9468396136510d3a079e27f))
+
 ## [2.0.0](https://github.com/Jubstaaa/deploy-actions/compare/v1.11.0...v2.0.0) (2026-11-28)
 
 
