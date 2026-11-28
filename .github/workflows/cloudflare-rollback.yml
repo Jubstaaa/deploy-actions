@@ -1,0 +1,124 @@
+name: Cloudflare rollback
+
+on:
+    workflow_call:
+        inputs:
+            runtime:
+                description: 'bun (bun install --frozen-lockfile) or node (npm ci).'
+                type: string
+                default: bun
+            working-directory:
+                description: 'Directory holding package.json, the lockfile and the wrangler config.'
+                type: string
+                default: .
+            version:
+                description: >-
+                    The version id to serve. Empty rolls back to the version
+                    before the current one, which is what an unplanned rollback
+                    wants; a deploy run reports its id in the job summary for
+                    when a specific one is needed.
+                type: string
+                default: ''
+            message:
+                description: 'The reason, recorded on the rollback in Cloudflare.'
+                type: string
+                default: 'Rolled back from GitHub Actions'
+            config:
+                description: 'wrangler config file, when it is not the one wrangler finds by itself.'
+                type: string
+                default: ''
+            environment:
+                description: 'GitHub environment to roll back through, for its protection rules.'
+                type: string
+                default: ''
+        secrets:
+            CLOUDFLARE_API_TOKEN:
+                required: true
+            CLOUDFLARE_ACCOUNT_ID:
+                required: true
+
+permissions:
+    contents: read
+
+jobs:
+    rollback:
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        environment: ${{ inputs.environment }}
+        concurrency:
+            group: cloudflare-deploy-${{ github.workflow }}-${{ inputs.working-directory }}
+            cancel-in-progress: false
+        defaults:
+            run:
+                working-directory: ${{ inputs.working-directory }}
+        env:
+            EXEC: ${{ inputs.runtime == 'node' && 'npx' || 'bunx' }}
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+            - if: inputs.runtime == 'bun'
+              uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+              with:
+                  bun-version-file: ${{ inputs.working-directory }}/package.json
+            - if: inputs.runtime == 'node'
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: ${{ inputs.working-directory }}/package.json
+            - name: Install
+              env:
+                  RUNTIME: ${{ inputs.runtime }}
+              run: |
+                  if [ "$RUNTIME" = node ]; then
+                      npm ci
+                  else
+                      bun install --frozen-lockfile
+                  fi
+
+            - name: Versions before the rollback
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  CONFIG: ${{ inputs.config }}
+              run: |
+                  args=""
+                  [ -z "$CONFIG" ] || args="-c $CONFIG"
+                  # shellcheck disable=SC2086
+                  $EXEC wrangler versions list $args | tee "$RUNNER_TEMP/before.log"
+
+            - name: Roll back
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  CONFIG: ${{ inputs.config }}
+                  MESSAGE: ${{ inputs.message }}
+                  VERSION: ${{ inputs.version }}
+              run: |
+                  set -o pipefail
+                  args=""
+                  [ -z "$CONFIG" ] || args="-c $CONFIG"
+                  # shellcheck disable=SC2086
+                  $EXEC wrangler rollback $VERSION $args --yes --message "$MESSAGE" | tee "$RUNNER_TEMP/rollback.log"
+
+            - name: Report
+              if: always()
+              env:
+                  VERSION: ${{ inputs.version }}
+              run: |
+                  {
+                      echo "## Cloudflare rollback"
+                      echo
+                      echo "Target: ${VERSION:-the version before the current one}"
+                      echo
+                      echo '```'
+                      tail -n 30 "$RUNNER_TEMP/rollback.log" 2>/dev/null || echo 'wrangler produced no output'
+                      echo '```'
+                      echo
+                      echo '<details><summary>Versions before the rollback</summary>'
+                      echo
+                      echo '```'
+                      tail -n 40 "$RUNNER_TEMP/before.log" 2>/dev/null || echo 'none'
+                      echo '```'
+                      echo
+                      echo '</details>'
+                  } >> "$GITHUB_STEP_SUMMARY"
