@@ -14,6 +14,22 @@ All notable changes to these actions. Versions follow [Semantic Versioning](http
 
 Without `image-digest`, behaviour and `release.env` are unchanged.
 
+## [2.0.0](https://github.com/Jubstaaa/deploy-actions/compare/v1.11.0...v2.0.0) (2026-11-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* make the Cloudflare deploy an action, not a workflow ([#24](https://github.com/Jubstaaa/deploy-actions/issues/24))
+
+### Features
+
+* **cloudflare-deploy:** let the build read secrets ([#22](https://github.com/Jubstaaa/deploy-actions/issues/22)) ([576f818](https://github.com/Jubstaaa/deploy-actions/commit/576f8189dcf99eb7ab7f2ede37ee19926341230e))
+
+
+### Code Refactoring
+
+* make the Cloudflare deploy an action, not a workflow ([#24](https://github.com/Jubstaaa/deploy-actions/issues/24)) ([82ecec4](https://github.com/Jubstaaa/deploy-actions/commit/82ecec44fb5cb228d78816cfbf5e06db2bc82299))
+
 ## [1.11.0](https://github.com/Jubstaaa/deploy-actions/compare/v1.10.1...v1.11.0) (2026-11-28)
 
 
