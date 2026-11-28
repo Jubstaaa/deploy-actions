@@ -77,7 +77,7 @@ on:
             doctor-version:
                 description: 'Version range of @jubstaa/config the doctor comes from.'
                 type: string
-                default: '^1'
+                default: '^2'
             scripts:
                 description: >-
                     Extra package.json scripts to run after the standard ones,
