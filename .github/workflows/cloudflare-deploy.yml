@@ -50,6 +50,13 @@ on:
                 required: true
             CLOUDFLARE_ACCOUNT_ID:
                 required: true
+            BUILD_ENV:
+                description: >-
+                    Environment the build needs that cannot be an input because
+                    it is held as a secret, as KEY=value lines. A NEXT_PUBLIC_
+                    value ends up in the bundle and is public from then on; it
+                    is a secret here only because that is where it is stored.
+                required: false
 
 permissions:
     contents: read
@@ -107,17 +114,18 @@ jobs:
                   fi
 
             - name: Environment for the scripts
-              if: inputs.env != ''
               env:
                   EXTRA_ENV: ${{ inputs.env }}
+                  SECRET_ENV: ${{ secrets.BUILD_ENV }}
               run: |
                   while IFS= read -r line; do
                       [ -n "$line" ] || continue
                       case "$line" in
                           [A-Za-z_]*=*) printf '%s\n' "$line" >> "$GITHUB_ENV" ;;
-                          *) echo "::error::env must be KEY=value lines, got '$line'"; exit 1 ;;
+                          *) echo "::error::env must be KEY=value lines"; exit 1 ;;
                       esac
-                  done <<< "$EXTRA_ENV"
+                  done <<< "$EXTRA_ENV
+                  $SECRET_ENV"
 
             - if: inputs.build != ''
               env:
