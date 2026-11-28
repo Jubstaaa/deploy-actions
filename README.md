@@ -180,6 +180,12 @@ jobs:
 | `environment` | `''` | a GitHub environment, for its protection rules |
 | `env` | `''` | extra `KEY=value` lines for the build and verify steps; never secrets |
 
+| Secret | | 
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | required |
+| `CLOUDFLARE_ACCOUNT_ID` | required |
+| `BUILD_ENV` | optional: `KEY=value` lines the build needs that are held as secrets. A `NEXT_PUBLIC_` value ends up in the bundle and is public from then on; it is a secret here only because that is where it is stored |
+
 wrangler comes from the project's own dependencies, so its version is the one in
 the lockfile and Renovate moves it like any other.
 
