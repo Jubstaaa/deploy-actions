@@ -192,6 +192,44 @@ The job never cancels in progress — a deploy interrupted halfway is worse than
 slow one — and it writes wrangler's output to the job summary, so what went out
 is readable without opening the log.
 
+## `cloudflare-rollback` (reusable workflow)
+
+`wrangler deploy` replaces what is live, so a bad deploy has nothing to fall
+back to by itself. Cloudflare keeps the previous versions; this serves one of
+them again.
+
+```yaml
+on:
+    workflow_dispatch:
+        inputs:
+            version:
+                description: 'Version id. Empty rolls back one.'
+                type: string
+jobs:
+    rollback:
+        uses: Jubstaaa/deploy-actions/.github/workflows/cloudflare-rollback.yml@<sha>
+        with:
+            version: ${{ inputs.version }}
+        secrets:
+            CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+            CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+```
+
+| Input | Default | |
+| --- | --- | --- |
+| `version` | `''` | the version id to serve; empty rolls back to the one before the current |
+| `message` | `Rolled back from GitHub Actions` | the reason, recorded on the rollback in Cloudflare |
+| `runtime`, `working-directory`, `config`, `environment` | as `cloudflare-deploy` | |
+
+It lists the versions before touching anything and writes both that list and
+wrangler's output to the job summary, so the state it found is readable
+afterwards. It shares `cloudflare-deploy`'s concurrency group, so a rollback and
+a deploy cannot run over each other.
+
+`cloudflare-deploy` reports the version it created in its own job summary and as
+a job output, which is the id to pass when rolling back to something specific
+rather than one step back.
+
 ### Staging and production from the same artifact
 
 `command: versions upload` uploads a version without serving it. A release then

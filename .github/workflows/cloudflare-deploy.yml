@@ -56,6 +56,8 @@ permissions:
 
 jobs:
     deploy:
+        outputs:
+            version: ${{ steps.upload.outputs.version }}
         runs-on: ubuntu-latest
         timeout-minutes: 20
         environment: ${{ inputs.environment }}
@@ -128,6 +130,7 @@ jobs:
               run: $RUN "$VERIFY"
 
             - name: Upload to Cloudflare
+              id: upload
               env:
                   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -139,13 +142,22 @@ jobs:
                   [ -z "$CONFIG" ] || args="-c $CONFIG"
                   # shellcheck disable=SC2086
                   $EXEC wrangler $COMMAND $args | tee "$RUNNER_TEMP/wrangler.log"
+                  version=$(grep -oE 'Version ID: *[0-9a-f-]{36}' "$RUNNER_TEMP/wrangler.log" | tail -1 | grep -oE '[0-9a-f-]{36}')
+                  echo "version=$version" >> "$GITHUB_OUTPUT"
 
             - name: Report what was deployed
               if: always()
+              env:
+                  VERSION: ${{ steps.upload.outputs.version }}
               run: |
                   {
                       echo "## Cloudflare"
                       echo
+                      if [ -n "$VERSION" ]; then
+                          echo "Version \`$VERSION\` — roll back to the one before it by running the"
+                          echo "rollback workflow, or to this one later by passing this id."
+                          echo
+                      fi
                       echo '```'
                       tail -n 20 "$RUNNER_TEMP/wrangler.log" 2>/dev/null || echo 'wrangler produced no output'
                       echo '```'
