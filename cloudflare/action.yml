@@ -1,0 +1,81 @@
+name: Cloudflare
+description: Upload a built project to Cloudflare Workers with the project's own wrangler.
+author: Jubstaaa
+
+inputs:
+    api-token:
+        description: Cloudflare API token with Workers Scripts Edit on the account.
+        required: true
+    account-id:
+        description: Cloudflare account the Worker belongs to.
+        required: true
+    command:
+        description: >-
+            wrangler command. "deploy" publishes immediately. "versions upload"
+            uploads a version without serving it, for a release promoted later.
+        required: false
+        default: deploy
+    config:
+        description: wrangler config file, when it is not the one wrangler finds by itself.
+        required: false
+        default: ''
+    runtime:
+        description: bun or node, which decides whether wrangler runs through bunx or npx.
+        required: false
+        default: bun
+    working-directory:
+        description: Directory holding the wrangler config and node_modules.
+        required: false
+        default: .
+
+outputs:
+    version:
+        description: The version id wrangler reported, which is what a targeted rollback needs.
+        value: ${{ steps.upload.outputs.version }}
+
+runs:
+    using: composite
+    steps:
+        - id: upload
+          shell: bash
+          working-directory: ${{ inputs.working-directory }}
+          env:
+              CLOUDFLARE_API_TOKEN: ${{ inputs.api-token }}
+              CLOUDFLARE_ACCOUNT_ID: ${{ inputs.account-id }}
+              COMMAND: ${{ inputs.command }}
+              CONFIG: ${{ inputs.config }}
+              RUNTIME: ${{ inputs.runtime }}
+          run: |
+              set -o pipefail
+              case "$RUNTIME" in
+                  bun) exec_with=bunx ;;
+                  node) exec_with=npx ;;
+                  *) echo "::error::runtime must be bun or node, got '$RUNTIME'"; exit 1 ;;
+              esac
+              case "$COMMAND" in
+                  deploy | 'versions upload') ;;
+                  *) echo "::error::command must be deploy or 'versions upload', got '$COMMAND'"; exit 1 ;;
+              esac
+              args=""
+              [ -z "$CONFIG" ] || args="-c $CONFIG"
+              # shellcheck disable=SC2086
+              $exec_with wrangler $COMMAND $args | tee "$RUNNER_TEMP/wrangler.log"
+              version=$(grep -oE 'Version ID: *[0-9a-f-]{36}' "$RUNNER_TEMP/wrangler.log" | tail -1 | grep -oE '[0-9a-f-]{36}')
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+
+        - if: always()
+          shell: bash
+          env:
+              VERSION: ${{ steps.upload.outputs.version }}
+          run: |
+              {
+                  echo "## Cloudflare"
+                  echo
+                  if [ -n "$VERSION" ]; then
+                      echo "Version \`$VERSION\` — pass this id to the rollback workflow to come back to it."
+                      echo
+                  fi
+                  echo '```'
+                  tail -n 20 "$RUNNER_TEMP/wrangler.log" 2>/dev/null || echo 'wrangler produced no output'
+                  echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"

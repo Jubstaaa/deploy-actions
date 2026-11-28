@@ -153,50 +153,44 @@ Each step runs the project's own `package.json` script, so the tool's version an
 
 The job has `contents: read` only, checks out without persisting credentials, and uses its own concurrency group (cancelled on a newer push to the same pull request). Turning a step off is for a step that has nothing to check, never for a failing one: fix it or commit a baseline.
 
-## `cloudflare-deploy` (reusable workflow)
+## `cloudflare`
 
-The Workers counterpart of `compose`: build the project, check the output is
-whole, and hand it to wrangler.
+The Workers counterpart of `compose`: hand a built project to wrangler.
 
 ```yaml
-jobs:
-    deploy:
-        uses: Jubstaaa/deploy-actions/.github/workflows/cloudflare-deploy.yml@<sha>
-        with:
-            verify: verify:export
-        secrets:
-            CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-            CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+- run: bun install --frozen-lockfile
+- run: bun run build
+  env:
+      NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
+- run: bun run verify:export
+- uses: Jubstaaa/deploy-actions/cloudflare@<sha>
+  with:
+      api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 ```
 
 | Input | Default | |
 | --- | --- | --- |
-| `runtime` | `bun` | `bun` or `node` |
-| `working-directory` | `.` | where `package.json`, the lockfile and the wrangler config live |
-| `build` | `build` | the script that produces what wrangler uploads; empty skips it |
-| `verify` | `''` | a script run after the build and before the upload |
+| `api-token` | — | Workers Scripts: Edit on the account |
+| `account-id` | — | the account the Worker belongs to |
 | `command` | `deploy` | `deploy` publishes immediately; `versions upload` uploads without serving, for a release promoted later |
 | `config` | `''` | a wrangler config file other than the one wrangler finds |
-| `environment` | `''` | a GitHub environment, for its protection rules |
-| `env` | `''` | extra `KEY=value` lines for the build and verify steps; never secrets |
+| `runtime` | `bun` | whether wrangler runs through `bunx` or `npx` |
+| `working-directory` | `.` | where the wrangler config and `node_modules` are |
 
-| Secret | | 
-| --- | --- |
-| `CLOUDFLARE_API_TOKEN` | required |
-| `CLOUDFLARE_ACCOUNT_ID` | required |
-| `BUILD_ENV` | optional: `KEY=value` lines the build needs that are held as secrets. A `NEXT_PUBLIC_` value ends up in the bundle and is public from then on; it is a secret here only because that is where it is stored |
+It outputs `version`, the id wrangler reported, and writes it to the job summary
+with wrangler's output.
 
-wrangler comes from the project's own dependencies, so its version is the one in
-the lockfile and Renovate moves it like any other.
+**Why an action and not a reusable workflow.** The build has to stay in the
+calling repository. A build that reads `NEXT_PUBLIC_API_URL` from a secret can
+name it in its own `env:` block, the way the droplet repositories already do; a
+shared workflow cannot, because it does not know what the variables are called,
+and the only way round that is to pass them as one opaque blob — which puts
+every value into `GITHUB_ENV` for every later step and masks none of them
+individually. wrangler comes from the project's own dependencies either way.
 
-**`verify` is the important one.** These projects deploy a static export, and a
-half-written one replaces the live site just as happily as a whole one. The
-check belongs in the project, as a script it can also run locally, not as a
-block of shell inside a workflow.
-
-The job never cancels in progress — a deploy interrupted halfway is worse than a
-slow one — and it writes wrangler's output to the job summary, so what went out
-is readable without opening the log.
+What is genuinely shared is the upload: the command, the version id, the
+summary. That is what this action is.
 
 ## `cloudflare-rollback` (reusable workflow)
 
@@ -232,14 +226,18 @@ wrangler's output to the job summary, so the state it found is readable
 afterwards. It shares `cloudflare-deploy`'s concurrency group, so a rollback and
 a deploy cannot run over each other.
 
-`cloudflare-deploy` reports the version it created in its own job summary and as
-a job output, which is the id to pass when rolling back to something specific
+The `cloudflare` action reports the version it created in the job summary and as
+an output, which is the id to pass when rolling back to something specific
 rather than one step back.
+
+This one stays a reusable workflow rather than an action: it is dispatched on
+its own, with nothing to build first, so the caller would otherwise be writing
+the checkout and install itself for no reason.
 
 ### Staging and production from the same artifact
 
-`command: versions upload` uploads a version without serving it. A release then
-promotes that exact version rather than building again, which is what keeps the
+`command: versions upload` on the `cloudflare` action uploads a version without
+serving it. A release then promotes that exact version rather than building again, which is what keeps the
 two environments honest: production is a staging build that was approved, not a
 rebuild that happens to come from the same commit.
 
