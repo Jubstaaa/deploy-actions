@@ -14,6 +14,13 @@ All notable changes to these actions. Versions follow [Semantic Versioning](http
 
 Without `image-digest`, behaviour and `release.env` are unchanged.
 
+## [1.11.0](https://github.com/Jubstaaa/deploy-actions/compare/v1.10.1...v1.11.0) (2026-11-28)
+
+
+### Features
+
+* add a cloudflare-rollback reusable workflow ([#20](https://github.com/Jubstaaa/deploy-actions/issues/20)) ([2b41e0e](https://github.com/Jubstaaa/deploy-actions/commit/2b41e0e4b24c478a8838acb5f765cdc0aaf05803))
+
 ## [1.10.1](https://github.com/Jubstaaa/deploy-actions/compare/v1.10.0...v1.10.1) (2026-11-28)
 
 
