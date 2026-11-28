@@ -14,6 +14,13 @@ All notable changes to these actions. Versions follow [Semantic Versioning](http
 
 Without `image-digest`, behaviour and `release.env` are unchanged.
 
+## [2.1.0](https://github.com/Jubstaaa/deploy-actions/compare/v2.0.1...v2.1.0) (2026-11-28)
+
+
+### Features
+
+* a reusable doctor workflow for projects with their own CI ([#28](https://github.com/Jubstaaa/deploy-actions/issues/28)) ([a4111a0](https://github.com/Jubstaaa/deploy-actions/commit/a4111a097c5424166340826923286577a6020e1a))
+
 ## [2.0.1](https://github.com/Jubstaaa/deploy-actions/compare/v2.0.0...v2.0.1) (2026-11-28)
 
 
