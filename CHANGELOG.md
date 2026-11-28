@@ -14,6 +14,13 @@ All notable changes to these actions. Versions follow [Semantic Versioning](http
 
 Without `image-digest`, behaviour and `release.env` are unchanged.
 
+## [2.2.0](https://github.com/Jubstaaa/deploy-actions/compare/v2.1.0...v2.2.0) (2026-11-28)
+
+
+### Features
+
+* a reusable pull request title check ([#30](https://github.com/Jubstaaa/deploy-actions/issues/30)) ([c36b582](https://github.com/Jubstaaa/deploy-actions/commit/c36b5826890de4e26a486ee158fc9dcc058d49e3))
+
 ## [2.1.0](https://github.com/Jubstaaa/deploy-actions/compare/v2.0.1...v2.1.0) (2026-11-28)
 
 
