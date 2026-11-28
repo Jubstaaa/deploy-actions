@@ -1,0 +1,21 @@
+name: PR title
+
+on:
+    workflow_call:
+
+permissions: {}
+
+jobs:
+    title:
+        runs-on: ubuntu-latest
+        timeout-minutes: 2
+        steps:
+            - name: Conventional Commit title
+              env:
+                  TITLE: ${{ github.event.pull_request.title }}
+              run: |
+                  pattern='^(feat|fix|perf|refactor|test|docs|style|build|ci|chore|revert)(\([A-Za-z0-9./,_ -]+\))?!?: .+'
+                  if ! printf '%s' "$TITLE" | grep -qE "$pattern"; then
+                    echo "::error::The pull request title must be a Conventional Commit, type(scope): summary. Squash-merging makes it the commit message, and release-please reads the type."
+                    exit 1
+                  fi
