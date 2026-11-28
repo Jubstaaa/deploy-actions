@@ -14,6 +14,13 @@ All notable changes to these actions. Versions follow [Semantic Versioning](http
 
 Without `image-digest`, behaviour and `release.env` are unchanged.
 
+## [1.10.1](https://github.com/Jubstaaa/deploy-actions/compare/v1.10.0...v1.10.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **quality-gate:** take the doctor from 2.x ([#18](https://github.com/Jubstaaa/deploy-actions/issues/18)) ([f94aea1](https://github.com/Jubstaaa/deploy-actions/commit/f94aea1e13946a818fc98248001e5d618b1b36a8))
+
 ## [1.10.0](https://github.com/Jubstaaa/deploy-actions/compare/v1.9.0...v1.10.0) (2026-11-28)
 
 
