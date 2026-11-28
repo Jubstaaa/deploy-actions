@@ -14,6 +14,13 @@ All notable changes to these actions. Versions follow [Semantic Versioning](http
 
 Without `image-digest`, behaviour and `release.env` are unchanged.
 
+## [1.10.0](https://github.com/Jubstaaa/deploy-actions/compare/v1.9.0...v1.10.0) (2026-11-28)
+
+
+### Features
+
+* add a cloudflare-deploy reusable workflow ([#16](https://github.com/Jubstaaa/deploy-actions/issues/16)) ([1664882](https://github.com/Jubstaaa/deploy-actions/commit/1664882ede71ddc6aca9cffdf9a7e46fce56d1dc))
+
 ## [1.9.0](https://github.com/Jubstaaa/deploy-actions/compare/v1.8.0...v1.9.0) (2026-11-27)
 
 
