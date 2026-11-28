@@ -193,7 +193,9 @@ jobs:
               working-directory: .
               env:
                   DOCTOR_VERSION: ${{ inputs.doctor-version }}
-              run: npx --yes --package="@jubstaa/config@$DOCTOR_VERSION" jubstaa-doctor
+              run: |
+                  npm install --prefix "$RUNNER_TEMP/doctor" --no-audit --no-fund "@jubstaa/config@$DOCTOR_VERSION"
+                  "$RUNNER_TEMP/doctor/node_modules/.bin/jubstaa-doctor"
 
             - name: actionlint
               if: inputs.actionlint
