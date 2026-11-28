@@ -146,7 +146,7 @@ Each step runs the project's own `package.json` script, so the tool's version an
 | `format`, `lint`, `typecheck`, `test`, `audit`, `knip`, `jscpd`, `depcruise`, `build`, `trivy`, `actionlint` | `true` | turn one step off, e.g. `build: false` for a package with nothing to build |
 | `trivy-skip-dirs` | installed and built output | comma-separated globs Trivy skips |
 | `doctor` | `true` | run `jubstaa-doctor` over the repository: `LICENSE`, `README.md`, `package.json` fields, canonical script names, and no prose comments in YAML |
-| `doctor-version` | `^1` | version range of `@jubstaa/config` the doctor comes from |
+| `doctor-version` | `^2` | version range of `@jubstaa/config` the doctor comes from |
 | `gitleaks` | `false` | scan the git history for committed secrets; also deepens the checkout, since it reads commits rather than the working tree |
 | `scripts` | `''` | extra `package.json` script names, one per line, run after the standard ones — for checks only this project has |
 | `env` | `''` | extra environment for the script steps, as `KEY=value` lines; placeholders and flags only, never secrets (workflow inputs are recorded in the run log) |
