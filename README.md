@@ -163,6 +163,17 @@ jobs: { doctor: { uses: Jubstaaa/deploy-actions/.github/workflows/doctor.yml@<sh
 
 The status check it reports is **`doctor / doctor`**. It runs [`jubstaa-doctor`](https://github.com/Jubstaaa/configs) (`LICENSE`, `README.md` with a title and a `## License` section, `package.json` fields, canonical script names, and no prose comments in YAML). The doctor is installed outside the repository and run inside it: `npx` inside a repository that has `overrides` fails with `EOVERRIDE` before the doctor starts. `doctor-version` (default `^2`) picks the version range of `@jubstaa/config`.
 
+## `pr-title` (reusable workflow)
+
+Fails a pull request whose title is not a Conventional Commit, `type(scope): summary`:
+
+```yaml
+on: { pull_request: { types: [opened, edited, synchronize, reopened] } }
+jobs: { title: { uses: Jubstaaa/deploy-actions/.github/workflows/pr-title.yml@<sha> } }
+```
+
+The status check it reports is **`title / title`**. These repositories squash-merge, so the title becomes the commit message, and release-please and a generated changelog read its type. A commit-msg hook would check every local commit that is then thrown away; the title is the one message that survives, it is checked by CI so it cannot be skipped, and it also covers pull requests opened from the web. The types are `feat`, `fix`, `perf`, `refactor`, `test`, `docs`, `style`, `build`, `ci`, `chore` and `revert`. List `edited` among the caller's event types, or fixing a title will not re-run the check.
+
 ## `cloudflare`
 
 The Workers counterpart of `compose`: hand a built project to wrangler.
